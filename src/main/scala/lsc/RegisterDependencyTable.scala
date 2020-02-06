@@ -12,58 +12,63 @@ import boom.common._
   * @param
   */
 
-class RdtCommitSignals(implicit p: Parameters) extends BoomBundle
+class RdtUpdateSignals(implicit p: Parameters) extends BoomBundle
 {
-  val rob = new CommitSignals()
-  val tag  = Vec(retireWidth, UInt(IbdaParams.ibda_tag_sz.W))
+  val valid = Bool()
+  val tag  = UInt(IbdaParams.ibda_tag_sz.W)
+  val uop = new MicroOp
 }
 
 class RdtIO(implicit p: Parameters) extends BoomBundle
 {
-  val commit = Input(new RdtCommitSignals)
+  val update = Input(Vec(decodeWidth, new RdtUpdateSignals))
   val mark = Output(new IstMark)
 }
 
 class RegisterDependencyTable(implicit p: Parameters) extends BoomModule{
   val io = IO(new RdtIO)
 
-  val rdt = Reg(Vec(32, UInt(IbdaParams.ibda_tag_sz.W))) //32 is hardcoded for now since logicalRegCount includes fpu regs
-  val commit_dst_valid = WireInit(VecInit(Seq.fill(retireWidth)(false.B)))
+  val rdt = Reg(Vec(boomParams.numIntPhysRegisters, UInt(IbdaParams.ibda_tag_sz.W)))
+  val commit_dst_valid = WireInit(VecInit(Seq.fill(decodeWidth)(false.B)))
 
   io.mark := DontCare
   io.mark.mark.map(_.valid := false.B)
 
-  for(i <- 0 until retireWidth){
-    val uop = io.commit.rob.uops(i)
+  for(i <- 0 until decodeWidth){
+
+
+    val uop = io.update(i).uop
+    val valid = io.update(i).valid
+    val tag = io.update(i).tag
+
     // record pc of last insn that committed to reg
-    // exclude 0 reg
-    when(io.commit.rob.valids(i) && uop.dst_rtype === RT_FIX && uop.ldst =/= 0.U){
-      rdt(uop.ldst) := io.commit.tag(i)
+    when(valid && uop.dst_rtype === RT_FIX && uop.ldst =/= 0.U){
+      rdt(uop.ldst) := tag
       commit_dst_valid(i) := true.B
     }
 
     val is_b = uop.is_lsc_b || uop.uopc === uopLD || uop.uopc === uopSTA || uop.uopc === uopSTD
     // add pcs of dependent insns to ist
-    when(io.commit.rob.valids(i) && is_b){
+    when(valid && is_b){
       when(uop.lrs1_rtype === RT_FIX && uop.lrs1 =/= 0.U){
         io.mark.mark(2*i).valid := true.B
-        io.mark.mark(2*i).bits := rdt(uop.lrs1)
+        io.mark.mark(2*i).bits := rdt(uop.prs1)
         // bypass rdt for previous insns committed in same cycle
         for (j <- 0 until i){
-          val uop_j = io.commit.rob.uops(j)
-          when(commit_dst_valid(j) && uop_j.ldst === uop.lrs1){
-            io.mark.mark(2*i).bits := io.commit.tag(j)
+          val uop_j = io.update(j).uop
+          when(commit_dst_valid(j) && uop_j.ldst === uop.prs1){
+            io.mark.mark(2*i).bits := io.update(i).tag
           }
         }
       }
       when(uop.lrs2_rtype === RT_FIX && uop.lrs2 =/= 0.U){
         io.mark.mark(2*i+1).valid := true.B
-        io.mark.mark(2*i+1).bits := rdt(uop.lrs2)
+        io.mark.mark(2*i+1).bits := rdt(uop.prs2)
         // bypass rdt for previous insns committed in same cycle
         for (j <- 0 until i){
-          val uop_j = io.commit.rob.uops(j)
-          when(commit_dst_valid(j) && uop_j.ldst === uop.lrs2){
-            io.mark.mark(2*i).bits := io.commit.tag(j)
+          val uop_j = io.update(j).uop
+          when(commit_dst_valid(j) && uop_j.ldst === uop.prs2){
+            io.mark.mark(2*i).bits := io.update(j).tag
           }
         }
       }
