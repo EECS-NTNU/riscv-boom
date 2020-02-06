@@ -487,25 +487,24 @@ class BoomCore(implicit p: Parameters) extends BoomModule
 
   //-------------------------------------------------------------
   // Instruction Slice Lookup
-  val ist_pc = Option(Wire(Vec(decodeWidth, UInt(vaddrBitsExtended.W))))
+  val ist_pc =  WireInit(VecInit(Seq.fill(decodeWidth) {0.U(vaddrBitsExtended.W)}))
   if (boomParams.loadSliceMode) {
     // If we want the Full PC we need FTQ ports and etc. This is not
     //  the preferred way since we need so many ports to FTQ
     if (boomParams.loadSliceCore.get.ibdaTagType == IBDA_TAG_FULL_PC) {
       val get_pc_slice = io.ifu.get_pc_slice.get
       for (w <- 0 until coreWidth) {
-        // Access only IST ports
-        val idx = w + IstFtqPortIdx
+
         // Request fetch_pc from FTQ
-        get_pc_slice(idx).ftq_idx := dec_uops(w).ftq_idx
+        get_pc_slice(w).ftq_idx := dec_uops(w).ftq_idx
         // Recreate PC for dispatched uop
-        val block_pc = AlignPCToBoundary(get_pc_slice(idx).fetch_pc, icBlockBytes)
-        ist_pc.get(w) := (block_pc | dec_uops(w).pc_lob) - Mux(dec_uops(w).edge_inst, 2.U, 0.U)
+        val block_pc = AlignPCToBoundary(get_pc_slice(w).fetch_pc, icBlockBytes)
+        ist_pc(w) := (block_pc | dec_uops(w).pc_lob) - Mux(dec_uops(w).edge_inst, 2.U, 0.U)
         ist.get.io.check(w).tag.valid := dec_fire(w)
-        ist.get.io.check(w).tag.bits := ist_pc.get(w)
+        ist.get.io.check(w).tag.bits := ist_pc(w)
         dis_uops(w).is_lsc_b := ist.get.io.check(w).in_ist
 
-        assert(!(dec_fire(w) && (dec_uops(w).debug_pc =/= ist_pc.get(w))), "[IST] debug_pc and fetch_pc mismatch")
+        assert(!(dec_fire(w) && (dec_uops(w).debug_pc =/= ist_pc(w))), "[IST] debug_pc and fetch_pc mismatch")
       }
     } else {
       // We dont want the full PC but rather some hash of the UOP.
@@ -589,10 +588,10 @@ class BoomCore(implicit p: Parameters) extends BoomModule
     for (w <- 0 until decodeWidth) {
       rdt.get.io.update(w).valid := dis_fire(w)
       rdt.get.io.update(w).uop := dis_uops(w)
-      rdt.get.io.update(w).tag :=  if (boomParams.loadSliceCore.get.ibdaTagType == IBDA_TAG_FULL_PC) {
-         RegNext(ist_pc.get(w))
+      if (boomParams.loadSliceCore.get.ibdaTagType == IBDA_TAG_FULL_PC) {
+        rdt.get.io.update(w).tag :=  RegNext(ist_pc(w))
       } else {
-          IbdaParams.ibda_get_tag(dis_uops(w))
+        rdt.get.io.update(w).tag :=  IbdaParams.ibda_get_tag(dis_uops(w))
       }
 
     }

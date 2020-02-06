@@ -88,7 +88,7 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 
   val br_unit           = Output(new BranchUnitResp())
   val get_pc            = Flipped(new GetPCFromFtqIO())
-  val get_pc_slice      = if (boomParams.loadSliceCore.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) Some(Vec(coreWidth*2, Flipped(new GetPCSlice()))) else None
+  val get_pc_slice      = if (boomParams.loadSliceCore.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) Some(Vec(coreWidth, Flipped(new GetPCSlice()))) else None
 
   val sfence            = Valid(new SFenceReq)
 
