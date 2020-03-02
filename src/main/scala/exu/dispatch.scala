@@ -78,6 +78,17 @@ class BasicDispatcher(implicit p: Parameters) extends Dispatcher
     dis(w).bits  := io.ren_uops(w).bits
   }
 }
+
+/**
+  * DnB Dispatcher - Contains DLQ and CRQ, access busy table of DLQ from the head
+  *
+  */
+
+class DnbDispatcher(implicit p: Parameters) extends Dispatcher
+{
+
+}
+
 /**
  * LSC Dispatcher - contains both A and B queues and accesses the busy table at their end.
  */
