@@ -88,7 +88,8 @@ case class BoomCoreParams(
   useBPWatch: Boolean = false,
   clockGate: Boolean = false,
   loadSliceCore: Option[LoadSliceCoreParams] = None,
-  dnbCore: Option[DnbCoreParams] = None
+  dnbCore: Option[DnbCoreParams] = None,
+  ibdaParams: Option[IbdaParams] = None
 
 
 ) extends freechips.rocketchip.tile.CoreParams
@@ -101,7 +102,7 @@ case class BoomCoreParams(
   val jumpInFrontend: Boolean = false // unused in boom
   val loadSliceMode: Boolean = loadSliceCore.isDefined
   val dnbMode: Boolean = dnbCore.isDefined
-  val ibda: Boolean = loadSliceMode || dnbMode
+  val ibdaMode: Boolean = loadSliceMode || dnbMode
 
   override def customCSRs(implicit p: Parameters) = new BoomCustomCSRs
 }
@@ -311,11 +312,49 @@ case class DromajoParams(
   */
 case class DnbCoreParams(
                         numDlqEntries: Int = 8,
-                        numCrqEntries: Int = 8,
-                        ibdaTagType: Int = IBDA_TAG_FULL_PC
+                        numCrqEntries: Int = 8
                         )
 {
 
+}
+
+
+case class IbdaParams(
+                       ibdaTagType: Int = IBDA_TAG_FULL_PC,
+                       rdtIstMarkWidth: Int = 4
+                     )
+{
+  def ibda_get_tag(uop: MicroOp): UInt = {
+    val tag = Wire(UInt(ibda_tag_sz.W))
+    if (ibdaTagType == IBDA_TAG_FULL_PC) tag := uop.debug_pc
+    else if (ibdaTagType == IBDA_TAG_UOPC_LOB) tag := Cat(uop.uopc, uop.pc_lob)
+    else if (ibdaTagType == IBDA_TAG_INST_LOB) tag := Cat(uop.inst, uop.pc_lob)
+    else assert(false.B, "ibda_get_tag not implemented for this tag")
+
+    tag
+  }
+
+  def rdtIstMarkSz: Int = {
+    if (rdtIstMarkWidth == 1) {
+      1
+    } else {
+      log2Ceil(rdtIstMarkWidth)
+    }
+  }
+
+  // Get tag size.
+  def ibda_tag_sz(): Int = {
+    ibdaTagType match {
+      case IBDA_TAG_FULL_PC => 40
+      case IBDA_TAG_UOPC_LOB => UOPC_SZ + 6 //uopc + pc_lob
+      case IBDA_TAG_INST_LOB => 32 + 6 //inst + pc_lob
+      case _ => {
+        assert(false.B, "ibda_tag_sz not implemented for this tag")
+        0
+      }
+    }
+
+  }
 }
 
 // Case class for LoadSliceCore parameters.

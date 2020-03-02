@@ -14,7 +14,7 @@ import freechips.rocketchip.util.{DescribedSRAM, PopCountAtLeast}
   */
 
 abstract class RegisterDependencyTable(implicit p: Parameters) extends BoomModule {
-  val lscParams = boomParams.loadSliceCore.get
+  val ibdaParams = boomParams.ibdaParams.get
   val io = IO(new RdtIO)
 }
 
@@ -22,13 +22,13 @@ abstract class RegisterDependencyTable(implicit p: Parameters) extends BoomModul
 class RdtIO(implicit p: Parameters) extends BoomBundle
 {
   val update = Input(Vec(decodeWidth, new RdtUpdateSignals))
-  val mark = Output(Vec(boomParams.loadSliceCore.get.rdtIstMarkWidth, new IstMark))
+  val mark = Output(Vec(boomParams.ibdaParams.get.rdtIstMarkWidth, new IstMark))
 }
 
 class RdtUpdateSignals(implicit p: Parameters) extends BoomBundle
 {
   val valid = Bool()
-  val tag  = UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W)
+  val tag  = UInt(boomParams.ibdaParams.get.ibda_tag_sz.W)
   val uop = new MicroOp
 }
 
@@ -38,29 +38,29 @@ class RdtSyncMem(implicit p: Parameters) extends RegisterDependencyTable {
     name = s"rdt_ram",
     desc = "RDT Data Array",
     size = boomParams.numIntPhysRegisters,
-    data = UInt(lscParams.ibda_tag_sz.W)
+    data = UInt(ibdaParams.ibda_tag_sz.W)
   )
   val in_ist = RegInit(VecInit(Seq.fill(boomParams.numIntPhysRegisters)(false.B)))
   val commit_dst_valid = WireInit(VecInit(Seq.fill(decodeWidth)(false.B)))
 
   // Stage 1
   val rdt1_update = Wire(Vec(decodeWidth, new RdtUpdateSignals()))
-  val rdt1_sram_read_addr = WireInit(VecInit(Seq.fill(lscParams.rdtIstMarkWidth)(0.U(log2Ceil(boomParams.numIntPhysRegisters).W))))
+  val rdt1_sram_read_addr = WireInit(VecInit(Seq.fill(ibdaParams.rdtIstMarkWidth)(0.U(log2Ceil(boomParams.numIntPhysRegisters).W))))
 
   // Stage 2
-  val rdt2_mark_tag       = Wire(Vec(lscParams.rdtIstMarkWidth, UInt(lscParams.ibda_tag_sz.W)))
-  val rdt2_mark_valid     = Wire(Vec(lscParams.rdtIstMarkWidth, Bool()))
-  val rdt2_sram_tag       = Wire(Vec(lscParams.rdtIstMarkWidth, UInt(lscParams.ibda_tag_sz.W)))
-  val rdt2_sram_in_ist    = Reg(Vec(lscParams.rdtIstMarkWidth, Bool()))
-  val rdt2_bypass_tag     = Reg(Vec(decodeWidth, UInt(lscParams.ibda_tag_sz.W)))
+  val rdt2_mark_tag       = Wire(Vec(ibdaParams.rdtIstMarkWidth, UInt(ibdaParams.ibda_tag_sz.W)))
+  val rdt2_mark_valid     = Wire(Vec(ibdaParams.rdtIstMarkWidth, Bool()))
+  val rdt2_sram_tag       = Wire(Vec(ibdaParams.rdtIstMarkWidth, UInt(ibdaParams.ibda_tag_sz.W)))
+  val rdt2_sram_in_ist    = Reg(Vec(ibdaParams.rdtIstMarkWidth, Bool()))
+  val rdt2_bypass_tag     = Reg(Vec(decodeWidth, UInt(ibdaParams.ibda_tag_sz.W)))
   val rdt2_bypass_in_ist  = Reg(Vec(decodeWidth, Bool()))
   val rdt2_bypass_valid   = Reg(Vec(decodeWidth, Bool()))
-  val rdt2_bypass_select  = Reg(Vec(lscParams.rdtIstMarkWidth, Bool()))
+  val rdt2_bypass_select  = Reg(Vec(ibdaParams.rdtIstMarkWidth, Bool()))
 
 
   // Mark port arbiting
   // To track which ports have already been used to mark and when we are full
-  val mark_port_idx = Wire(Vec(decodeWidth * 2, UInt(lscParams.rdtIstMarkSz.W)))
+  val mark_port_idx = Wire(Vec(decodeWidth * 2, UInt(ibdaParams.rdtIstMarkSz.W)))
   val mark_port_used = WireInit(VecInit(Seq.fill(decodeWidth*2)(false.B)))
   val mark_port_full = Wire(Vec(decodeWidth * 2, Bool()))
 
@@ -71,7 +71,7 @@ class RdtSyncMem(implicit p: Parameters) extends RegisterDependencyTable {
   }
 
 
-  for (i <- 0 until lscParams.rdtIstMarkWidth) {
+  for (i <- 0 until ibdaParams.rdtIstMarkWidth) {
     // SRAM read
     rdt2_sram_tag(i) := rdt(rdt1_sram_read_addr(i))
     rdt2_sram_in_ist(i) := in_ist(rdt1_sram_read_addr(i))
@@ -110,13 +110,13 @@ class RdtSyncMem(implicit p: Parameters) extends RegisterDependencyTable {
     } else { // Normal case
       mark_port_idx(2 * i + 0) := Mux(mark_port_used(2 * i - 1), mark_port_idx(2 * i - 1) + 1.U, mark_port_idx(2 * i - 1))
       mark_port_full(2 * i + 0) := Mux(mark_port_used(2 * i - 1) &&
-        mark_port_idx(2 * i) === lscParams.rdtIstMarkWidth.asUInt(), true.B, mark_port_full(2 * i - 1))
+        mark_port_idx(2 * i) === ibdaParams.rdtIstMarkWidth.asUInt(), true.B, mark_port_full(2 * i - 1))
     }
 
     // Can we try to mark RS2?
     mark_port_idx(2 * i + 1) := Mux(mark_port_used(2 * i), mark_port_idx(2 * i) + 1.U, mark_port_idx(2 * i))
     mark_port_full(2 * i + 1) := Mux(mark_port_used(2 * i) &&
-      mark_port_idx(2 * i + 1) === lscParams.rdtIstMarkWidth.asUInt(),
+      mark_port_idx(2 * i + 1) === ibdaParams.rdtIstMarkWidth.asUInt(),
       true.B, mark_port_full(2 * i))
 
 
@@ -188,7 +188,7 @@ class RdtSyncMem(implicit p: Parameters) extends RegisterDependencyTable {
   }
 
   // Do output MUX
-  for (i <- 0 until lscParams.rdtIstMarkWidth) {
+  for (i <- 0 until ibdaParams.rdtIstMarkWidth) {
     rdt2_mark_valid(i) := Mux(rdt2_bypass_select(i), !rdt2_bypass_in_ist(i), !rdt2_sram_in_ist(i))
     rdt2_mark_tag(i) := Mux(rdt2_bypass_select(i), rdt2_bypass_tag(i), rdt2_sram_tag(i))
   }
@@ -197,7 +197,7 @@ class RdtSyncMem(implicit p: Parameters) extends RegisterDependencyTable {
 
 
 class RdtOneBit(implicit p: Parameters) extends RegisterDependencyTable {
-  val rdt = Reg(Vec(boomParams.numIntPhysRegisters, UInt(lscParams.ibda_tag_sz.W)))
+  val rdt = Reg(Vec(boomParams.numIntPhysRegisters, UInt(ibdaParams.ibda_tag_sz.W)))
   val in_ist = RegInit(VecInit(Seq.fill(boomParams.numIntPhysRegisters)(false.B)))
   val commit_dst_valid = WireInit(VecInit(Seq.fill(decodeWidth)(false.B)))
 
@@ -205,7 +205,7 @@ class RdtOneBit(implicit p: Parameters) extends RegisterDependencyTable {
   io.mark.map(_.mark.valid := false.B)
 
   // To track which ports have already been used to mark and when we are full
-  val mark_port_idx = Wire(Vec(decodeWidth * 2, UInt(log2Ceil(lscParams.rdtIstMarkWidth).W)))
+  val mark_port_idx = Wire(Vec(decodeWidth * 2, UInt(log2Ceil(ibdaParams.rdtIstMarkWidth).W)))
   val mark_port_used = WireInit(VecInit(Seq.fill(decodeWidth*2)(false.B)))
   val mark_port_full = Wire(Vec(decodeWidth * 2, Bool()))
 
@@ -232,7 +232,7 @@ class RdtOneBit(implicit p: Parameters) extends RegisterDependencyTable {
     } else { // Normal case
       mark_port_idx(2*i + 0) := Mux(mark_port_used(2*i - 1), mark_port_idx(2*i - 1) + 1.U, mark_port_idx(2*i - 1))
       mark_port_full(2*i + 0) := Mux(mark_port_used(2*i - 1) &&
-        mark_port_idx(2 * i) === lscParams.rdtIstMarkWidth.asUInt(), true.B, mark_port_full(2*i - 1))
+        mark_port_idx(2 * i) === ibdaParams.rdtIstMarkWidth.asUInt(), true.B, mark_port_full(2*i - 1))
     }
 
 
@@ -270,7 +270,7 @@ class RdtOneBit(implicit p: Parameters) extends RegisterDependencyTable {
       // Can we try to mark RS2?
       mark_port_idx(2*i + 1) := Mux(mark_port_used(2*i), mark_port_idx(2*i) + 1.U, mark_port_idx(2*i))
       mark_port_full(2*i + 1) := Mux(mark_port_used(2*i) &&
-        mark_port_idx(2 * i + 1) === lscParams.rdtIstMarkWidth.asUInt(),
+        mark_port_idx(2 * i + 1) === ibdaParams.rdtIstMarkWidth.asUInt(),
         true.B, mark_port_full(2*i))
 
       // Mark source register 2
@@ -307,7 +307,7 @@ class RdtOneBit(implicit p: Parameters) extends RegisterDependencyTable {
 
 class RdtBasic(implicit p: Parameters) extends RegisterDependencyTable {
 
-  val rdt = Reg(Vec(boomParams.numIntPhysRegisters, UInt(lscParams.ibda_tag_sz.W)))
+  val rdt = Reg(Vec(boomParams.numIntPhysRegisters, UInt(ibdaParams.ibda_tag_sz.W)))
   val commit_dst_valid = WireInit(VecInit(Seq.fill(decodeWidth)(false.B)))
 
   io.mark := DontCare

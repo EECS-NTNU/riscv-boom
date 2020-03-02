@@ -109,7 +109,7 @@ class FetchTargetQueue(num_entries: Int)(implicit p: Parameters) extends BoomMod
 
     // Give PC info to BranchUnit.
     val get_ftq_pc = new GetPCFromFtqIO()
-    val get_pc_slice = if (boomParams.loadSliceCore.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false))  Some(Vec(coreWidth, new GetPCSlice())) else None
+    val get_pc_slice = if (boomParams.ibdaParams.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false))  Some(Vec(coreWidth, new GetPCSlice())) else None
 
     // Restore predictor history on a branch mispredict or pipeline flush.
     val restore_history = Valid(new RestoreHistory)
@@ -305,7 +305,7 @@ class FetchTargetQueue(num_entries: Int)(implicit p: Parameters) extends BoomMod
   io.get_ftq_pc.next_pc := ram(WrapInc(curr_idx, num_entries)).fetch_pc
   io.get_ftq_pc.next_val := WrapInc(curr_idx, num_entries) =/= enq_ptr.value
 
-  if (boomParams.loadSliceCore.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) {
+  if (boomParams.ibdaParams.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) {
     val get_pc_slice = io.get_pc_slice.get
     for (w <- 0 until coreWidth) {
       get_pc_slice(w).fetch_pc := ram(get_pc_slice(w).ftq_idx).fetch_pc

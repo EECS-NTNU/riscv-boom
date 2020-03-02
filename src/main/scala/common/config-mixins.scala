@@ -215,7 +215,8 @@ class WithDnbBooms extends Config((site, here, up) => {
       fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true)),
       useAtomics = true,
       usingFPU = true,
-      dnbCore = Some(DnbCoreParams(numDlqEntries = 8, numCrqEntries = 8, ibdaTagType = IBDA_TAG_FULL_PC)),
+      dnbCore = Some(DnbCoreParams(numDlqEntries = 8, numCrqEntries = 8)),
+      ibdaParams = Some(IbdaParams(ibdaTagType = IBDA_TAG_FULL_PC, rdtIstMarkWidth = 1)),
       loadSliceCore = None
     ),
     dcache = Some(DCacheParams(rowBits = site(SystemBusKey).beatBits,
@@ -261,7 +262,8 @@ class WithSliceBooms extends Config((site, here, up) => {
       fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true)),
       useAtomics = true,
       usingFPU = true,
-      loadSliceCore = Some(LoadSliceCoreParams(numAqEntries = 8, numBqEntries = 8, ibdaTagType = IBDA_TAG_FULL_PC, rdtIstMarkWidth = 1))
+      loadSliceCore = Some(LoadSliceCoreParams(numAqEntries = 8, numBqEntries = 8)),
+      ibdaParams = Some(IbdaParams(ibdaTagType = IBDA_TAG_FULL_PC, rdtIstMarkWidth = 1))
     ),
     dcache = Some(DCacheParams(rowBits = site(SystemBusKey).beatBits,
                                nSets=64, nWays=4, nMSHRs=2, nTLBEntries=8)),

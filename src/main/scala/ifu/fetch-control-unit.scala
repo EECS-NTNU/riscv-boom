@@ -92,7 +92,7 @@ class FetchControlUnit(implicit p: Parameters) extends BoomModule
 
     val br_unit           = Input(new BranchUnitResp())
     val get_pc            = new GetPCFromFtqIO()
-    val get_pc_slice      = if(boomParams.loadSliceCore.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) Some(Vec(coreWidth, new GetPCSlice())) else None
+    val get_pc_slice      = if(boomParams.ibdaParams.map(_.ibdaTagType == IBDA_TAG_FULL_PC).getOrElse(false)) Some(Vec(coreWidth, new GetPCSlice())) else None
 
     // Breakpoint info
     val status            = Input(new MStatus)

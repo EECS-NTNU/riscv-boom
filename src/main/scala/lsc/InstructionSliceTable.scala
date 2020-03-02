@@ -12,27 +12,27 @@ import freechips.rocketchip.util.DescribedSRAM
 
 class IstCheck (implicit p: Parameters) extends BoomBundle
 {
-  val tag = Input(ValidIO(UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W)))
+  val tag = Input(ValidIO(UInt(boomParams.ibdaParams.get.ibda_tag_sz.W)))
   val in_ist = ValidIO(Bool())
 }
 
 class IstIO(implicit p: Parameters) extends BoomBundle
 {
-  val mark = Vec(boomParams.loadSliceCore.get.rdtIstMarkWidth, Input(new IstMark))
+  val mark = Vec(boomParams.ibdaParams.get.rdtIstMarkWidth, Input(new IstMark))
   val check = Vec(coreWidth, new IstCheck)
 }
 
 
 class IstMark(implicit p: Parameters) extends BoomBundle
 {
-  val mark = ValidIO(UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W))
+  val mark = ValidIO(UInt(boomParams.ibdaParams.get.ibda_tag_sz.W))
 }
 
 abstract class InstructionSliceTable(entries: Int=128, ways: Int=2)(implicit p: Parameters) extends BoomModule {
   val io = IO(new IstIO)
   require(isPow2(entries))
   require(isPow2(ways))
-  val lscParams = boomParams.loadSliceCore.get
+  val ibdaParams = boomParams.ibdaParams.get
 }
 
 
@@ -52,25 +52,25 @@ class InstructionSliceTableSyncMem(entries: Int=128, ways: Int=2)(implicit p: Pa
 //  )._1
 //    Reg(Vec(entries/ways, UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W)))
 //    SyncReadMem(entries/ways, UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W))
-    Mem(entries/ways, UInt(boomParams.loadSliceCore.get.ibda_tag_sz.W))
+    Mem(entries/ways, UInt(boomParams.ibdaParams.get.ibda_tag_sz.W))
   )
   // TODO: change back when using syncRead
-  val ist2_check_sram_tag = Reg(Vec(decodeWidth, Vec(ways, UInt(lscParams.ibda_tag_sz.W))))
+  val ist2_check_sram_tag = Reg(Vec(decodeWidth, Vec(ways, UInt(ibdaParams.ibda_tag_sz.W))))
 
   val tag_valids = (0 until ways).map(_ => RegInit(VecInit(Seq.fill(entries/ways)(false.B)))) //TODO: Use SyncReadMem
   val tag_lru = RegInit(VecInit(Seq.fill(entries/2)(false.B)))
 
   // Stage 1
   val ist1_check_valid = Wire(Vec(decodeWidth, Bool()))
-  val ist1_check_tag = Wire(Vec(decodeWidth, UInt(lscParams.ibda_tag_sz.W)))
-  val ist1_mark_valid  = Wire(Vec(lscParams.rdtIstMarkWidth, Bool()))
-  val ist1_mark_tag  = Wire(Vec(lscParams.rdtIstMarkWidth, UInt(lscParams.ibda_tag_sz.W)))
+  val ist1_check_tag = Wire(Vec(decodeWidth, UInt(ibdaParams.ibda_tag_sz.W)))
+  val ist1_mark_valid  = Wire(Vec(ibdaParams.rdtIstMarkWidth, Bool()))
+  val ist1_mark_tag  = Wire(Vec(ibdaParams.rdtIstMarkWidth, UInt(ibdaParams.ibda_tag_sz.W)))
   dontTouch(ist1_check_tag)
 
   // Stage 2
   val ist2_check_tag = RegNext(ist1_check_tag)
   val ist2_check_valid = RegNext(ist1_check_valid)
-//  val ist2_check_sram_tag = Wire(Vec(decodeWidth, Vec(ways, UInt(lscParams.ibda_tag_sz.W))))
+//  val ist2_check_sram_tag = Wire(Vec(decodeWidth, Vec(ways, UInt(ibdaParams.ibda_tag_sz.W))))
   val ist2_check_sram_valid = Reg(Vec(decodeWidth, Vec(ways, Bool())))
   val ist2_in_ist = Wire(Vec(decodeWidth, Valid(Bool())))
   dontTouch(ist2_check_sram_tag)
@@ -80,13 +80,13 @@ class InstructionSliceTableSyncMem(entries: Int=128, ways: Int=2)(implicit p: Pa
   def index(i: UInt): UInt = {
     val indexBits = log2Up(entries/ways)
     val index = Wire(UInt(indexBits.W))
-    if (lscParams.ibdaTagType == IBDA_TAG_FULL_PC) {
+    if (ibdaParams.ibdaTagType == IBDA_TAG_FULL_PC) {
       // xor the second lowest bit with the highest index bit so compressed insns are spread around
       index := i(indexBits+2-1, 2) ^ Cat(i(1), 0.U((indexBits-1).W))
-    } else if (lscParams.ibdaTagType == IBDA_TAG_INST_LOB) {
+    } else if (ibdaParams.ibdaTagType == IBDA_TAG_INST_LOB) {
       index := Cat(i(12), i(13), i(5,2)) ^ Cat(i(1), 0.U((indexBits-1).W))
       // TODO: Research the entropy in the instruction encoding?
-    } else if (lscParams.ibdaTagType == IBDA_TAG_UOPC_LOB) {
+    } else if (ibdaParams.ibdaTagType == IBDA_TAG_UOPC_LOB) {
       index := i(indexBits+2-1,2) ^ Cat(i(1), 0.U((indexBits-1).W))
     }
     index
@@ -99,7 +99,7 @@ class InstructionSliceTableSyncMem(entries: Int=128, ways: Int=2)(implicit p: Pa
     ist1_check_tag(i) := io.check(i).tag.bits
   }
 
-  for (i <- 0 until lscParams.rdtIstMarkWidth) {
+  for (i <- 0 until ibdaParams.rdtIstMarkWidth) {
     ist1_mark_valid(i) := io.mark(i).mark.valid
     ist1_mark_tag(i) := io.mark(i).mark.bits
   }
@@ -132,7 +132,7 @@ class InstructionSliceTableSyncMem(entries: Int=128, ways: Int=2)(implicit p: Pa
   }
 
   // mark - later so mark lrus get priority
-  for(i <- 0 until lscParams.rdtIstMarkWidth){
+  for(i <- 0 until ibdaParams.rdtIstMarkWidth){
     when(ist1_mark_valid(i)){
       val idx = index(ist1_mark_tag(i))
       when(tag_lru(idx)){
@@ -158,7 +158,7 @@ class InstructionSliceTableBasic(entries: Int=128, ways: Int=2)(implicit p: Para
   val tag_valids = RegInit(VecInit(Seq.fill(entries)(false.B)))
   val tag_lru = RegInit(VecInit(Seq.fill(entries/2)(false.B)))
 
-  val lscParams = boomParams.loadSliceCore.get
+  val ibdaParams = boomParams.loadSliceCore.get
 
   require(entries == 128)
   require(ways == 2)
@@ -166,13 +166,13 @@ class InstructionSliceTableBasic(entries: Int=128, ways: Int=2)(implicit p: Para
 
     val indexBits = log2Up(entries/ways)
     val index = Wire(UInt(indexBits.W))
-    if (lscParams.ibdaTagType == IBDA_TAG_FULL_PC) {
+    if (ibdaParams.ibdaTagType == IBDA_TAG_FULL_PC) {
       // xor the second lowest bit with the highest index bit so compressed insns are spread around
       index := i(indexBits+2-1, 2) ^ Cat(i(1), 0.U((indexBits-1).W))
-    } else if (lscParams.ibdaTagType == IBDA_TAG_INST_LOB) {
+    } else if (ibdaParams.ibdaTagType == IBDA_TAG_INST_LOB) {
       index := Cat(i(12), i(13), i(5,2)) ^ Cat(i(1), 0.U((indexBits-1).W))
       // TODO: Research the entropy in the instruction encoding?
-    } else if (lscParams.ibdaTagType == IBDA_TAG_UOPC_LOB) {
+    } else if (ibdaParams.ibdaTagType == IBDA_TAG_UOPC_LOB) {
       index := i(indexBits+2-1,2) ^ Cat(i(1), 0.U((indexBits-1).W))
     }
 
@@ -197,7 +197,7 @@ class InstructionSliceTableBasic(entries: Int=128, ways: Int=2)(implicit p: Para
     }
   }
   // mark - later so mark lrus get priority
-  for(i <- 0 until lscParams.rdtIstMarkWidth){
+  for(i <- 0 until ibdaParams.rdtIstMarkWidth){
     when(io.mark(i).mark.valid){
       val pc = io.mark(i).mark.bits
       val idx = index(pc)
