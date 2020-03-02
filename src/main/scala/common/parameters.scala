@@ -87,7 +87,9 @@ case class BoomCoreParams(
   useRVE: Boolean = false,
   useBPWatch: Boolean = false,
   clockGate: Boolean = false,
-  loadSliceCore: Option[LoadSliceCoreParams] = None
+  loadSliceCore: Option[LoadSliceCoreParams] = None,
+  dnbCore: Option[DnbCoreParams] = None
+
 
 ) extends freechips.rocketchip.tile.CoreParams
 {
@@ -98,6 +100,8 @@ case class BoomCoreParams(
   val retireWidth = decodeWidth
   val jumpInFrontend: Boolean = false // unused in boom
   val loadSliceMode: Boolean = loadSliceCore.isDefined
+  val dnbMode: Boolean = dnbCore.isDefined
+  val ibda: Boolean = loadSliceMode || dnbMode
 
   override def customCSRs(implicit p: Parameters) = new BoomCustomCSRs
 }
@@ -300,6 +304,19 @@ case class DromajoParams(
   plicParams: Option[PLICParams] = None
 )
 
+
+/**
+  * Delay and Bypass Core Parameters
+  *
+  */
+case class DnbCoreParams(
+                        numDlqEntries: Int = 8,
+                        numCrqEntries: Int = 8,
+                        ibdaTagType: Int = IBDA_TAG_FULL_PC
+                        )
+{
+
+}
 
 // Case class for LoadSliceCore parameters.
 //  TODO: Consider moving this to separate file?
