@@ -100,16 +100,18 @@ class BasicDispatcher(implicit p: Parameters) extends Dispatcher
 class DnbDispatcher(implicit p: Parameters) extends Dispatcher {
   // FIFOs
   val dnbParams = boomParams.dnbParams.get
-  val dlq = Module(new SliceDispatchQueue(
+  val dlq = Module(new SliceDispatchQueue( DispatchQueueParams(
     numEntries = dnbParams.numDlqEntries,
     qName="DLQ",
-    deqWidth=1
-  ))
-  val crq = Module(new SliceDispatchQueue(
+    deqWidth=1,
+    enqWidth= coreWidth)))
+
+
+  val crq = Module(new SliceDispatchQueue( DispatchQueueParams(
     numEntries = dnbParams.numCrqEntries,
     qName="CRQ",
-    deqWidth=1
-  ))
+    deqWidth=1,
+    enqWidth = coreWidth)))
 
   // Route brinfo and flush into the fifos
   dlq.io.brinfo := io.brinfo.get
@@ -265,19 +267,24 @@ class SliceDispatcher(implicit p: Parameters) extends Dispatcher {
     require(issueParams(2).dispatchWidth == 1)
   }
 
-  //slice queues
-  val a_queue = Module(new SliceDispatchQueue(
+  // slice queues
+  val a_queue = Module(new SramDispatchQueue( DispatchQueueParams(
     numEntries = boomParams.loadSliceCore.get.numAqEntries,
     qName = "a_queue",
-    deqWidth = boomParams.loadSliceCore.get.aDispatches))
-  val b_queue = Module(new SliceDispatchQueue(
+    deqWidth = boomParams.loadSliceCore.get.aDispatches,
+    enqWidth = coreWidth))
+  )
+  val b_queue = Module(new SramDispatchQueue( DispatchQueueParams(
     numEntries = boomParams.loadSliceCore.get.numBqEntries,
     qName = "b_queue",
-    deqWidth = boomParams.loadSliceCore.get.bDispatches))
+    deqWidth = boomParams.loadSliceCore.get.bDispatches,
+    enqWidth = coreWidth))
+  )
   a_queue.io.flush := io.flush.get
   b_queue.io.flush := io.flush.get
   a_queue.io.brinfo := io.brinfo.get
   b_queue.io.brinfo := io.brinfo.get
+
   a_queue.io.tsc_reg := io.tsc_reg
   b_queue.io.tsc_reg := io.tsc_reg
 
@@ -536,179 +543,3 @@ class CompactingDispatcher(implicit p: Parameters) extends Dispatcher
           u.ready := r}
 }
 
-@chiselName
-class SliceDispatchQueue(
-                        val numEntries: Int = 8,
-                        val qName: String,
-                        val deqWidth: Int = 1
-                        )(implicit p: Parameters) extends BoomModule
-{
-  val io = IO(new Bundle {
-    val enq_uops = Vec(coreWidth, Flipped(DecoupledIO(new MicroOp)))
-    val heads = Vec(deqWidth, DecoupledIO(new MicroOp()))
-
-    val brinfo = Input(new BrResolutionInfo())
-    val flush = Input(new Bool)
-    val tsc_reg = Input(UInt(width=xLen.W)) // needed for pipeview
-  })
-
-  val qAddrSz: Int = log2Ceil(numEntries)
-
-  // Maps i to idx of queue. Used with for-loops starting at head or tail
-  def wrapIndex(i: UInt): UInt = {
-    val out = Wire(UInt(qAddrSz.W))
-    when(i <= numEntries.U) {
-      out := i
-    }.otherwise {
-      out := i - numEntries.U
-    }
-    out
-  }
-
-  // Queue state
-  val q_uop = Reg(Vec(numEntries, new MicroOp()))
-  val valids = RegInit(VecInit(Seq.fill(numEntries)(false.B)))
-  val head = RegInit(0.U(qAddrSz.W))
-  val tail = RegInit(0.U(qAddrSz.W))
-
-
-  // Wires for calculating state in next CC
-  val head_next = WireInit(head) // needs to be initialized here because firrtl can't detect that an assignment condition is always met
-  val tail_next = Wire(UInt(qAddrSz.W))
-
-  // Handle enqueues
-  //  Use WrapInc to sequentialize an arbitrary number of enqueues.
-  val enq_idx = Wire(Vec(coreWidth, UInt(qAddrSz.W)))
-  for (w <- 0 until coreWidth) {
-    if (w == 0) {
-      enq_idx(w) := tail
-    } else {
-      // Here we calculate the q idx to pass back to the ROB
-      enq_idx(w) := Mux(io.enq_uops(w - 1).fire, WrapInc(enq_idx(w - 1), numEntries), enq_idx(w - 1))
-    }
-
-    when(io.enq_uops(w).fire)
-    {
-      valids(enq_idx(w)) := true.B
-      q_uop(enq_idx(w)) := io.enq_uops(w).bits
-    }
-  }
-  // Update tail
-  //  We have already incremented the tail pointer in the previous loop.
-  //  Only needs a last increment if the last enq port also fired
-  tail_next := Mux(io.enq_uops(coreWidth - 1).fire, WrapInc(enq_idx(coreWidth - 1), numEntries), enq_idx(coreWidth - 1))
-
-  // Handle dequeues
-  // on more so we also do something if all are dequeued
-  for (i <- 0 until deqWidth+1) {
-    val previous_deq = if(i==0) true.B else io.heads(i-1).fire()
-    val current_deq =  if(i==deqWidth) false.B else io.heads(i).fire()
-    assert(!(!previous_deq && current_deq), "deq only possible in order!")
-    // transition from deq to not deq - there should be exactly one
-    // TODO: maybe do this in a smarter way so the compiler knows this and can optimize?
-    when(previous_deq && !current_deq){
-      // TODO: something other than % for wrap?
-      head_next := (head+i.U)%numEntries.U
-    }
-  }
-
-
-  // Handle branch resolution
-  //  On mispredict, find oldest that is killed and kill everyone younger than that
-  //  On resolved. Update all branch masks in paralell. Updates also invalid entries, for simplicity.
-  val updated_brmask = WireInit(false.B)//VecInit(Seq.fill(numEntries)(false.B))) //This wire decides if we should block the deque from head because of a branch resolution
-  val entry_killed = WireInit(VecInit(Seq.fill(numEntries)(false.B)))
-  when(io.brinfo.valid) {
-    for (i <- 0 until numEntries) {
-      val br_mask = q_uop(i).br_mask
-      val entry_match = valids(i) && maskMatch(io.brinfo.mask, br_mask)
-
-      when (entry_match && io.brinfo.mispredict) { // Mispredict
-        entry_killed(i) := true.B
-        valids(i) := false.B
-      }.elsewhen(entry_match && !io.brinfo.mispredict) { // Resolved
-        q_uop(i).br_mask := (br_mask & ~io.brinfo.mask)
-        updated_brmask := true.B
-      }
-    }
-    // tail update logic
-    for (i <- 0 until numEntries) {
-      // treat it as a circular structure
-      val previous_killed = if(i==0) entry_killed(numEntries-1) else entry_killed(i-1)
-      // transition from not killed to killed - there should be one at maximum
-      when(!previous_killed && entry_killed(i)){
-        // this one was killed but the previous one not => this is tail
-        // if branches are killed there should be nothing being enqueued
-        // TODO: make sure this is true (assert)
-        tail_next := i.U
-      }
-    }
-  }
-
-
-  // Pipeline flushs
-  when(io.flush)
-  {
-    head_next := 0.U
-    tail_next := 0.U
-    valids.map(_ := false.B)
-  }
-
-  require(numEntries>2*coreWidth)
-
-
-  for(i <- 0 until deqWidth){
-  for(i <- 0 until deqWidth){
-    val idx = head + i.U
-    // Route out IO
-    io.heads(i).bits := q_uop(idx)
-    io.heads(i).valid :=  valids(idx) &&
-      !updated_brmask && //TODO: this might lead to poor performance
-      !entry_killed(idx) &&
-      !io.flush // TODO: handle flush?
-    when(io.heads(i).fire()){
-      valids(idx) := false.B
-    }
-  }
-  }
-
-  for (w <- 0 until coreWidth)
-  {
-    io.enq_uops(w).ready := !valids(tail+w.U) //TODO: ensure it is possible to take only some from rename
-  }
-
-  // Update for next CC
-  head := head_next
-  tail := tail_next
-
-  // TODO: update
-//  // dequeue implies queue valid (not empty)
-//  assert(!io.deq_uop || !empty)
-//
-//  // empty implies ready
-//  assert(!empty || ready)
-//
-//  // enqueue implies ready
-//  assert(!io.enq_uops.map(_.valid).reduce(_||_) || ready)
-//
-//  // No deques on flush
-//  assert(!(io.deq_uop && io.flush))
-
-  if (O3PIPEVIEW_PRINTF) {
-    for (i <- 0 until coreWidth) {
-      when (io.enq_uops(i).valid) {
-        printf("%d; O3PipeView:"+qName+": %d\n",
-          io.enq_uops(i).bits.debug_events.fetch_seq,
-          io.tsc_reg)
-      }
-    }
-  }
-
-  dontTouch(io)
-  dontTouch(q_uop)
-  dontTouch(valids)
-  dontTouch(head)
-  dontTouch(tail)
-  dontTouch(head_next)
-  dontTouch(tail_next)
-}
