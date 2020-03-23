@@ -92,8 +92,8 @@ class IssueUnitIO(
   val tsc_reg          = Input(UInt(width=xLen.W))
 
   // DnB ports to Dispatch
-  val dlq_head = if(boomParams.dnbMode) Some(Flipped(DecoupledIO(new MicroOp))) else None
-  val crq_head = if(boomParams.dnbMode) Some(Flipped(DecoupledIO(new MicroOp))) else None
+  val dlq_head = if(boomParams.dnbMode) Some(Vec(boomParams.dnbParams.get.dlqDispatches, Flipped(DecoupledIO(new MicroOp)))) else None
+  val crq_head = if(boomParams.dnbMode) Some(Vec(boomParams.dnbParams.get.crqDispatches, Flipped(DecoupledIO(new MicroOp)))) else None
   val rob_head_idx = if(boomParams.dnbMode) Some(Input(UInt(robAddrSz.W))) else None
 }
 

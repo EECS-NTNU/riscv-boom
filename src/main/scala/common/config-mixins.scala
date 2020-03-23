@@ -217,7 +217,9 @@ class WithDnbBooms extends Config((site, here, up) => {
       usingFPU = true,
       dnbParams = Some(DnbParams(
         numCrqEntries = 8,
-        numDlqEntries = 8
+        numDlqEntries = 8,
+        crqDispatches = 2,
+        dlqDispatches = 2,
       )),
       ibdaParams = Some(IbdaParams(
         ibdaTagType = IBDA_TAG_FULL_PC,
@@ -225,7 +227,7 @@ class WithDnbBooms extends Config((site, here, up) => {
       )),
       busyLookupParams = Some(BusyLookupParams(
         lookupAtRename = true,
-        lookupAtDisWidth = 1
+        lookupAtDisWidth = 2
       ))
 
     ),

@@ -31,38 +31,55 @@ class IssueUnitDnbUnified(
                            (implicit p: Parameters)
   extends IssueUnit(params.numEntries, params.issueWidth, numWakeupPorts, params.iqType, params.dispatchWidth)
 {
+  val dnbParams = boomParams.dnbParams.get
   //TODO: figure out how to allocate some issue port explicitly fro DLQ and CRQ?
   //TODO: allow non-urgent dlq insns if fu is available?
   // we need this so we can enqueue it
-  val dlq_uop = WireInit(io.dlq_head.get.bits)
-  dlq_uop.iw_p1_poisoned := false.B
-  dlq_uop.iw_p2_poisoned := false.B
-  dlq_uop.iw_state := s_valid_1
-  val dlq_head_dist = Wire(UInt(robAddrSz.W))
-  // rob_head_idx + dlqRobUrgentDist >= dlq_head.rob_idx
-  when(io.rob_head_idx.get <= dlq_uop.rob_idx){
-    dlq_head_dist := dlq_uop.rob_idx - io.rob_head_idx.get
-  }.otherwise{
-    // wrap around case
-    val max_rob_head = (numRobRows << log2Ceil(coreWidth)).U
-    dlq_head_dist := (dlq_uop.rob_idx +& max_rob_head) - io.rob_head_idx.get
+  val dlq_uop = Wire(Vec(dnbParams.dlqDispatches, new MicroOp))
+  val dlq_request = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+  val dlq_urgent = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+  val dlq_will_be_valid = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+  val dlq_grant = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+  val dlq_grant_urgent = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+  val dlq_to_slot = Wire(Vec(dnbParams.dlqDispatches, Bool()))
+
+
+  for(i <- 0 until dnbParams.dlqDispatches) {
+    dlq_uop(i) := io.dlq_head.get(i).bits
+    dlq_uop(i).iw_p1_poisoned := false.B
+    dlq_uop(i).iw_p2_poisoned := false.B
+    dlq_uop(i).iw_state := s_valid_1
+    val dlq_head_dist = Wire(UInt(robAddrSz.W))
+    // rob_head_idx + dlqRobUrgentDist >= dlq_head.rob_idx
+    when(io.rob_head_idx.get <= dlq_uop(i).rob_idx){
+      dlq_head_dist := dlq_uop(i).rob_idx - io.rob_head_idx.get
+    }.otherwise{
+      // wrap around case
+      val max_rob_head = (numRobRows << log2Ceil(coreWidth)).U
+      dlq_head_dist := (dlq_uop(i).rob_idx +& max_rob_head) - io.rob_head_idx.get
+    }
+    val dlq_near_head = WireInit(dlq_head_dist  < boomParams.dnbParams.get.dlqRobUrgentDist.U)
+    dlq_urgent(i) := io.dlq_head.get(i).valid && dlq_near_head
+    val dlq_busy = (dlq_uop(i).prs1_busy || dlq_uop(i).prs2_busy || dlq_uop(i).prs3_busy)
+    dlq_request(i) := io.dlq_head.get(i).valid && !dlq_busy
+    dlq_grant_urgent(i) := false.B
+    dlq_grant(i) := false.B
+    dlq_will_be_valid(i) := dlq_urgent(i) && !dlq_grant_urgent(i)
+    dlq_to_slot(i) := false.B
+    io.dlq_head.get(i).ready := dlq_grant_urgent(i) || dlq_to_slot(i) || dlq_grant(i)
+
+    assert(!((dlq_grant(i) || dlq_grant_urgent(i)) && dlq_to_slot(i) && io.dlq_head.get(i).valid), "[dnb-iu] DLQ head is both issued and added to IQ")
+    assert(!( io.dlq_head.get(i).valid && dlq_urgent(i) && !(dlq_to_slot(i) || dlq_grant_urgent(i))), "[dnb-iu] DLQ head is urgent but is not added to IQ nor granted")
   }
-  val dlq_near_head = WireInit(dlq_head_dist  < boomParams.dnbParams.get.dlqRobUrgentDist.U)
-  val dlq_urgent = io.dlq_head.get.valid && dlq_near_head
-  val dlq_busy = (dlq_uop.prs1_busy || dlq_uop.prs2_busy || dlq_uop.prs3_busy)
-  val dlq_request = io.dlq_head.get.valid && !dlq_busy
-  val dlq_grant_urgent = WireInit(false.B)
-  val dlq_grant = WireInit(false.B)
-  val dlq_will_be_valid = dlq_urgent && !dlq_grant_urgent
-  val dlq_to_slot = WireInit(false.B)
-  io.dlq_head.get.ready := dlq_grant_urgent || dlq_to_slot || dlq_grant
+
+
   //-------------------------------------------------------------
   // Figure out how much to shift entries by
 
   // need to be able to shift by one mor in order to incorporate dlq
-  val maxShift = dispatchWidth+1
+  val maxShift = dispatchWidth+dnbParams.dlqDispatches
   // TODO: figure out if this might increase the critical path
-  val vacants = issue_slots.map(s => !(s.valid)) ++ Seq(!dlq_urgent) ++ io.dis_uops.map(_.valid).map(!_.asBool)
+  val vacants = issue_slots.map(s => !(s.valid)) ++ dlq_urgent.map(!_) ++ io.dis_uops.map(_.valid).map(!_.asBool)
   val shamts_oh = Array.fill(numIssueSlots+maxShift) {Wire(UInt(width=maxShift.W))}
   // track how many to shift up this entry by by counting previous vacant spots
   def SaturatingCounterOH(count_oh:UInt, inc: Bool, max: Int): UInt = {
@@ -84,7 +101,7 @@ class IssueUnitDnbUnified(
 
   // which entries' uops will still be next cycle? (not being issued and vacated)
   val will_be_valid = (0 until numIssueSlots).map(i => issue_slots(i).will_be_valid) ++
-    Seq(dlq_will_be_valid) ++
+    dlq_will_be_valid ++
     (0 until dispatchWidth).map(i => io.dis_uops(i).valid &&
       !dis_uops(i).exception &&
       !dis_uops(i).is_fence &&
@@ -95,7 +112,7 @@ class IssueUnitDnbUnified(
   val queue_added = WireInit(VecInit(Seq.fill(maxShift)(false.B)))
   dontTouch(queue_added)
   val uops = issue_slots.map(s=>s.out_uop) ++
-    Seq(dlq_uop) ++
+    dlq_uop ++
     dis_uops.map(s=>s)
   for (i <- 0 until numIssueSlots) {
     issue_slots(i).in_uop.valid := false.B
@@ -125,7 +142,9 @@ class IssueUnitDnbUnified(
     (!issue_slots(i).will_be_valid || issue_slots(i).clear) && !(issue_slots(i).in_uop.valid))
   //TODO: maybe also change behavior for DLQ
   val num_available = PopCount(will_be_available)
-  dlq_to_slot := queue_added(0) && dlq_will_be_valid
+  for (i <- 0 until dnbParams.dlqDispatches) {
+    dlq_to_slot(i) := queue_added(i) && dlq_will_be_valid(i)
+  }
   for (w <- 0 until dispatchWidth) {
 //    assert(!queue_added(w+1) || io.dis_uops(w).ready, f"IQ: dispatch $w had ready logic error")
 //    assert(!io.dis_uops(w).fire() || queue_added(w), f"IQ: dispatch $w had ready logic error")
@@ -148,24 +167,26 @@ class IssueUnitDnbUnified(
 
   val port_issued = Array.fill(issueWidth){false.B}
   // urgent_dlq > slots > crq
-  val requests = Seq(dlq_urgent && dlq_request)++
+  val requests = (dlq_urgent zip dlq_request).map {case (a,b) => a && b} ++
     issue_slots.map(s => s.request)++
-    Seq(io.crq_head.get.valid)++
-    Seq(dlq_request && !dlq_urgent)
-  val grants = Seq(dlq_grant_urgent)++
+    io.crq_head.get.map(h => h.valid)++
+    (dlq_urgent zip dlq_request).map {case (a,b) => !a && b}
+  val grants = dlq_grant_urgent ++
     issue_slots.map(s => s.grant)++
-    Seq(io.crq_head.get.ready)++
-    Seq(dlq_grant)
-  val candidate_uops = Seq(dlq_uop)++
+    io.crq_head.get.map(h => h.ready)++
+    dlq_grant
+  val candidate_uops = dlq_uop++
     issue_slots.map(s => s.uop)++
-    Seq(io.crq_head.get.bits)++
-    Seq(dlq_uop)
+    io.crq_head.get.map(h => h.bits)++
+    dlq_uop
 
-  require(requests.length == numIssueSlots+3)
-  require(grants.length == numIssueSlots+3)
-  require(candidate_uops.length == numIssueSlots+3)
+  val len = numIssueSlots + dnbParams.dlqDispatches*2 + dnbParams.crqDispatches
 
-  for (i <- 0 until numIssueSlots+3) {
+  require(requests.length == len)
+  require(grants.length == len)
+  require(candidate_uops.length == len)
+
+  for (i <- 0 until len) {
     grants(i) := false.B
     var uop_issued = false.B
 
