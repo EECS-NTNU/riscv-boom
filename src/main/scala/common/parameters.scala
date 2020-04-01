@@ -111,7 +111,7 @@ case class BoomCoreParams(
       require(busyLookupParams.get.lookupAtDisWidth == loadSliceCore.get.dispatches())
     }
     if (dnbMode) {
-      require(busyLookupParams.get.lookupAtDisWidth == 1)
+      require(busyLookupParams.get.lookupAtDisWidth == dnbParams.get.dlqDispatches)
     }
   }
 
@@ -329,7 +329,10 @@ case class DnbParams(
                                 numCrqEntries: Int = 8,
                                 numDlqEntries: Int = 8,
                                 dlqRobUrgentDist: Int = 2,
+                                crqDispatches: Int = 1,
+                                dlqDispatches: Int = 1
                               ){
+  def dispatches(): Int = crqDispatches + dlqDispatches
 }
 
 // Case class for LoadSliceCore parameters.
