@@ -184,6 +184,8 @@ abstract class FunctionalUnit(
 
     // only used by memaddr calc unit
     val bp = if (isMemAddrCalcUnit) Input(Vec(nBreakpoints, new BP)) else null
+    val mcontext = if (isMemAddrCalcUnit) Input(UInt(coreParams.mcontextWidth.W)) else null
+    val scontext = if (isMemAddrCalcUnit) Input(UInt(coreParams.scontextWidth.W)) else null
 
   })
 }
@@ -511,10 +513,12 @@ class MemAddrCalcUnit(implicit p: Parameters)
     (size === 3.U && (effective_address(2,0) =/= 0.U))
 
   val bkptu = Module(new BreakpointUnit(nBreakpoints))
-  bkptu.io.status := io.status
-  bkptu.io.bp     := io.bp
-  bkptu.io.pc     := DontCare
-  bkptu.io.ea     := effective_address
+  bkptu.io.status   := io.status
+  bkptu.io.bp       := io.bp
+  bkptu.io.pc       := DontCare
+  bkptu.io.ea       := effective_address
+  bkptu.io.mcontext := io.mcontext
+  bkptu.io.scontext := io.scontext
 
   val ma_ld  = io.req.valid && io.req.bits.uop.uopc === uopLD && misaligned
   val ma_st  = io.req.valid && (io.req.bits.uop.uopc === uopSTA || io.req.bits.uop.uopc === uopAMO_AG) && misaligned
@@ -592,7 +596,7 @@ class IntToFPUnit(latency: Int)(implicit p: Parameters)
   val fp_ctrl = fp_decoder.io.sigs
   val fp_rm = Mux(ImmGenRm(io_req.uop.imm_packed) === 7.U, io.fcsr_rm, ImmGenRm(io_req.uop.imm_packed))
   val req = Wire(new tile.FPInput)
-  val tag = !fp_ctrl.singleIn
+  val tag = fp_ctrl.typeTagIn
 
   req <> fp_ctrl
 
@@ -601,6 +605,7 @@ class IntToFPUnit(latency: Int)(implicit p: Parameters)
   req.in2 := unbox(io_req.rs2_data, tag, None)
   req.in3 := DontCare
   req.typ := ImmGenTyp(io_req.uop.imm_packed)
+  req.fmt := DontCare // FIXME: this may not be the right thing to do here
   req.fmaCmd := DontCare
 
   assert (!(io.req.valid && fp_ctrl.fromint && req.in1(xLen).asBool),
@@ -613,7 +618,7 @@ class IntToFPUnit(latency: Int)(implicit p: Parameters)
   ifpu.io.in.valid := io.req.valid
   ifpu.io.in.bits := req
   ifpu.io.in.bits.in1 := io_req.rs1_data
-  val out_double = Pipe(io.req.valid, !fp_ctrl.singleOut, intToFpLatency).bits
+  val out_double = Pipe(io.req.valid, fp_ctrl.typeTagOut === D, intToFpLatency).bits
 
 //io.resp.bits.data              := box(ifpu.io.out.bits.data, !io.resp.bits.uop.fp_single)
   io.resp.bits.data              := box(ifpu.io.out.bits.data, out_double)
