@@ -20,8 +20,7 @@ import boom.common._
 import boom.exu.BrUpdateInfo
 import boom.util.{IsKilledByBranch, GetNewBrMask, BranchKillableQueue, IsOlder, UpdateBrMask, AgePriorityEncoder, WrapInc, Transpose}
 
-
-class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCacheModule()(p) {
+abstract class WritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCacheModule()(p) {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new WritebackReq(edge.bundle)))
     val meta_read = Decoupled(new L1MetaReadReq)
@@ -32,8 +31,10 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
     val mem_grant = Input(Bool())
     val release = Decoupled(new TLBundleC(edge.bundle))
     val lsu_release = Decoupled(new TLBundleC(edge.bundle))
+    val release_in_progress = Output(Bool())
   })
-
+}
+class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends WritebackUnit {
   val req = Reg(new WritebackReq(edge.bundle))
   val s_invalid :: s_fill_buffer :: s_lsu_release :: s_active :: s_grant :: Nil = Enum(5)
   val state = RegInit(s_invalid)
@@ -58,6 +59,7 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
   io.resp            := false.B
   io.lsu_release.valid := false.B
   io.lsu_release.bits := DontCare
+  io.release_in_progress := state.isOneOf(s_active, s_grant) && req.voluntary
 
 
   val r_address = Cat(req.tag, req.idx) << blockOffBits
@@ -117,7 +119,7 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
     io.lsu_release.valid := true.B
     io.lsu_release.bits := probeResponse
     when (io.lsu_release.fire) {
-     state := s_active
+      state := s_active
     }
   } .elsewhen (state === s_active) {
     io.release.valid := data_req_cnt < refillCycles.U
@@ -142,7 +144,137 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
   }
 }
 
-class BoomProbeUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCacheModule()(p) {
+class PipelinedBoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends WritebackUnit {
+  val s0_req = Reg(new WritebackReq(edge.bundle))
+  val s1_req = Reg(new WritebackReq(edge.bundle))
+  val s0_invalid :: s_fill_buffer :: s_wait_for_s1 :: Nil = Enum(3)
+  val s1_invalid :: s_lsu_release :: s_active :: s_grant :: Nil = Enum(4)
+  val buffer_1 :: buffer_2 :: Nil = Enum(2)
+  val s0_state = RegInit(s0_invalid)
+  val s1_state = RegInit(s1_invalid)
+  val r1_data_req_fired = RegInit(false.B)
+  val r2_data_req_fired = RegInit(false.B)
+  val r1_data_req_cnt = Reg(UInt(log2Up(refillCycles+1).W))
+  val r2_data_req_cnt = Reg(UInt(log2Up(refillCycles+1).W))
+  val s0_data_req_cnt = RegInit(0.U(log2Up(refillCycles+1).W))
+  val s1_data_req_cnt = RegInit(0.U(log2Up(refillCycles+1).W))
+  val (_, last_beat, all_beats_done, beat_count) = edge.count(io.release)
+  val s0_wb_buffer_idx =RegInit(buffer_1)
+  val s1_wb_buffer_idx =RegInit(buffer_2)
+  val wb_buffer = Reg(Vec(2, Vec(refillCycles, UInt(encRowBits.W))))
+  val acked = RegInit(false.B)
+
+  io.idx.valid       := s0_state =/= s0_invalid
+  io.idx.bits        := s0_req.idx
+  io.release.valid   := false.B
+  io.release.bits    := DontCare
+  io.req.ready       := false.B
+  io.meta_read.valid := false.B
+  io.meta_read.bits  := DontCare
+  io.data_req.valid  := false.B
+  io.data_req.bits   := DontCare
+  io.resp            := false.B
+  io.lsu_release.valid := false.B
+  io.lsu_release.bits := DontCare
+  io.release_in_progress := s1_state =/= s1_invalid
+
+
+
+  val r_address = Cat(s1_req.tag, s1_req.idx) << blockOffBits
+  val id = cfg.nMSHRs
+  val probeResponse = edge.ProbeAck(
+                          fromSource = id.U,
+                          toAddress = r_address,
+                          lgSize = lgCacheBlockBytes.U,
+                          reportPermissions = s1_req.param,
+                          data = wb_buffer(s1_wb_buffer_idx)(s1_data_req_cnt))
+
+  val voluntaryRelease = edge.Release(
+                          fromSource = id.U,
+                          toAddress = r_address,
+                          lgSize = lgCacheBlockBytes.U,
+                          shrinkPermissions = s1_req.param,
+                          data = wb_buffer(s1_wb_buffer_idx)(s1_data_req_cnt))._2
+
+  assert(s0_wb_buffer_idx =/= s1_wb_buffer_idx, "s0 and s1 should not use the same writeback buffer!")
+
+  when (s0_state === s0_invalid) {
+    io.req.ready := true.B
+    when (io.req.fire) {
+      s0_state := s_fill_buffer
+      s0_data_req_cnt := 0.U
+      s0_req := io.req.bits
+      acked := false.B
+    }
+  } .elsewhen (s0_state === s_fill_buffer) {
+    io.meta_read.valid := s0_data_req_cnt < refillCycles.U
+    io.meta_read.bits.idx := s0_req.idx
+    io.meta_read.bits.tag := s0_req.tag
+
+    io.data_req.valid := s0_data_req_cnt < refillCycles.U
+    io.data_req.bits.way_en := s0_req.way_en
+    io.data_req.bits.addr := (if(refillCycles > 1)
+                              Cat(s0_req.idx, s0_data_req_cnt(log2Up(refillCycles)-1,0))
+                            else s0_req.idx) << rowOffBits
+
+    r1_data_req_fired := false.B
+    r1_data_req_cnt   := 0.U
+    r2_data_req_fired := r1_data_req_fired
+    r2_data_req_cnt   := r1_data_req_cnt
+    when (io.data_req.fire && io.meta_read.fire) {
+      r1_data_req_fired := true.B
+      r1_data_req_cnt   := s0_data_req_cnt
+      s0_data_req_cnt := s0_data_req_cnt + 1.U
+    }
+    when (r2_data_req_fired) {
+      wb_buffer(s0_wb_buffer_idx)(r2_data_req_cnt) := io.data_resp
+      when (r2_data_req_cnt === (refillCycles-1).U) {
+        io.resp := true.B
+        s0_state := s_wait_for_s1
+        s0_data_req_cnt := 0.U
+      }
+    }
+  } .elsewhen (s0_state === s_wait_for_s1) {
+    when (s1_state === s1_invalid) {
+      s0_state := s0_invalid
+      s1_state := s_lsu_release
+      s1_wb_buffer_idx := s0_wb_buffer_idx
+      s0_wb_buffer_idx := s1_wb_buffer_idx
+      s1_req := s0_req
+    }
+  }
+  when (s1_state === s_lsu_release) {
+    io.lsu_release.valid := true.B
+    io.lsu_release.bits := probeResponse
+    when (io.lsu_release.fire) {
+     s1_state := s_active
+     s1_data_req_cnt := 0.U
+    }
+  } .elsewhen (s1_state === s_active) {
+    io.release.valid := s1_data_req_cnt < refillCycles.U
+    io.release.bits := Mux(s1_req.voluntary, voluntaryRelease, probeResponse)
+
+    when (io.mem_grant) {
+      acked := true.B
+    }
+    when (io.release.fire) {
+      s1_data_req_cnt := s1_data_req_cnt + 1.U
+    }
+    when ((s1_data_req_cnt === (refillCycles-1).U) && io.release.fire) {
+      s1_state := Mux(s1_req.voluntary, s_grant, s1_invalid)
+    }
+  } .elsewhen (s1_state === s_grant) {
+    when (io.mem_grant) {
+      acked := true.B
+    }
+    when (acked) {
+      s1_state := s1_invalid
+    }
+  }
+}
+
+class BoomProbeUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCacheModule()(p)
+  with HasBoomCoreParameters {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new TLBundleB(edge.bundle)))
     val rep = Decoupled(new TLBundleC(edge.bundle))
@@ -155,13 +287,14 @@ class BoomProbeUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCach
     val mshr_wb_rdy = Output(Bool()) // Should we block MSHR writebacks while we finish our own?
     val block_state = Input(new ClientMetadata())
     val lsu_release = Decoupled(new TLBundleC(edge.bundle))
+    val release_in_progress = Input(Bool()) // Is the wb unit currently busy with a release?
 
     val state = Output(Valid(UInt(coreMaxAddrBits.W)))
   })
 
   val (s_invalid :: s_meta_read :: s_meta_resp :: s_mshr_req ::
-       s_mshr_resp :: s_lsu_release :: s_release :: s_writeback_req :: s_writeback_resp ::
-       s_meta_write :: s_meta_write_resp :: Nil) = Enum(11)
+       s_mshr_resp :: s_lsu_release :: s_release :: s_writeback_req :: s_writeback_resp_1 ::
+       s_writeback_resp_2 :: s_meta_write :: s_meta_write_resp :: Nil) = Enum(12)
   val state = RegInit(s_invalid)
 
   val req = Reg(new TLBundleB(edge.bundle))
@@ -206,7 +339,7 @@ class BoomProbeUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCach
   io.wb_req.bits.voluntary := false.B
 
 
-  io.mshr_wb_rdy := !state.isOneOf(s_release, s_writeback_req, s_writeback_resp, s_meta_write, s_meta_write_resp)
+  io.mshr_wb_rdy := !state.isOneOf(s_release, s_writeback_req, s_writeback_resp_1, s_writeback_resp_2, s_meta_write, s_meta_write_resp)
 
   io.lsu_release.valid := state === s_lsu_release
   io.lsu_release.bits  := edge.ProbeAck(req, report_param)
@@ -241,11 +374,22 @@ class BoomProbeUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCach
     }
   } .elsewhen (state === s_writeback_req) {
     when (io.wb_req.fire) {
-      state := s_writeback_resp
+      state := s_writeback_resp_1
     }
-  } .elsewhen (state === s_writeback_resp) {
+  } .elsewhen (state === s_writeback_resp_1) {
     // wait for the writeback request to finish before updating the metadata
     when (io.wb_req.ready) {
+      // Need additional waiting if wb_unit is pipelined
+      if(enableWbPipelining) {
+        state := s_writeback_resp_2
+      } else {
+        state := s_meta_write
+      }
+    }
+  }.elsewhen(state === s_writeback_resp_2) {
+    // wait for the writeback request to finish before updating the metadata
+    // Need two states to compensate for pipelined WB-unit
+    when(!io.release_in_progress) {
       state := s_meta_write
     }
   } .elsewhen (state === s_meta_write) {
@@ -428,7 +572,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
 
   val t_replay :: t_probe :: t_wb :: t_mshr_meta_read :: t_lsu :: t_prefetch :: Nil = Enum(6)
 
-  val wb = Module(new BoomWritebackUnit)
+  val wb = if (enableWbPipelining) Module(new PipelinedBoomWritebackUnit) else Module(new BoomWritebackUnit)
   val prober = Module(new BoomProbeUnit)
   val mshrs = Module(new BoomMSHRFile)
   mshrs.io.clear_all    := io.lsu.force_order
@@ -775,6 +919,9 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   tl_out.a <> mshrs.io.mem_acquire
 
   // probes and releases
+  val prober_address = Cat(prober.io.meta_write.bits.tag, prober.io.meta_write.bits.idx) << blockOffBits
+
+
   prober.io.req.valid   := tl_out.b.valid && !lrsc_valid
   tl_out.b.ready        := prober.io.req.ready && !lrsc_valid
   prober.io.req.bits    := tl_out.b.bits
@@ -782,7 +929,8 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   prober.io.block_state := s2_hit_state(0)
   metaWriteArb.io.in(1) <> prober.io.meta_write
   prober.io.mshr_rdy    := mshrs.io.probe_rdy
-  prober.io.wb_rdy      := (prober.io.meta_write.bits.idx =/= wb.io.idx.bits) || !wb.io.idx.valid
+  prober.io.wb_rdy := ((prober.io.meta_write.bits.idx =/= wb.io.idx.bits) || !wb.io.idx.valid) && ((wb.io.release.bits.address =/= prober_address) || !wb.io.release_in_progress)
+  prober.io.release_in_progress := wb.io.release_in_progress
   mshrs.io.prober_state := prober.io.state
 
   // refills
@@ -809,6 +957,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   wb.io.req            <> wbArb.io.out
   wb.io.data_resp       := s2_data_muxed(0)
   mshrs.io.wb_resp      := wb.io.resp
+  mshrs.io.release_in_progress      := wb.io.release_in_progress
   wb.io.mem_grant       := tl_out.d.fire && tl_out.d.bits.source === cfg.nMSHRs.U
 
   val lsu_release_arb = Module(new Arbiter(new TLBundleC(edge.bundle), 2))

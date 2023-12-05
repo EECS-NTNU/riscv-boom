@@ -91,6 +91,8 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
     val wb_resp     = Input(Bool())
 
     val probe_rdy   = Output(Bool())
+
+    val release_in_progress = Input(Bool())
   })
 
   // TODO: Optimize this. We don't want to mess with cache during speculation
@@ -220,7 +222,9 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
       state := handle_pri_req(state)
     }
   } .elsewhen (state === s_refill_req) {
-    io.mem_acquire.valid := true.B
+    // Do not issue aquire if a release is pending as per tilelink
+    if(!issueAcquireUnderRelease) io.mem_acquire.valid := !io.release_in_progress else io.mem_acquire.valid := true.B
+
     // TODO: Use AcquirePerm if just doing permissions acquire
     io.mem_acquire.bits  := edge.AcquireBlock(
       fromSource      = io.id,
@@ -545,6 +549,8 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
 
     val fence_rdy = Output(Bool())
     val probe_rdy = Output(Bool())
+
+    val release_in_progress = Input(Bool())
   })
 
   val req_idx = OHToUInt(io.req.map(_.valid))
@@ -581,18 +587,28 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
   val lb_read_arb  = Module(new Arbiter(new LineBufferReadReq, cfg.nMSHRs))
   val lb_write_arb = Module(new Arbiter(new LineBufferWriteReq, cfg.nMSHRs))
 
+  lb_read_arb.io.out.ready  := true.B
+  lb_write_arb.io.out.ready := true.B
+
+  val lb_read_data = WireInit(0.U(encRowBits.W))
+  when (lb_write_arb.io.out.fire) {
+    lb.write(lb_write_arb.io.out.bits.lb_addr, lb_write_arb.io.out.bits.data)
+  }
+  when (lb_read_arb.io.out.fire) {
+    lb_read_data := lb.read(lb_read_arb.io.out.bits.lb_addr)
+  }
+
+  /*
+  // Linebuffer write blocks read (old implementation)
   lb_read_arb.io.out.ready  := false.B
   lb_write_arb.io.out.ready := true.B
 
   val lb_read_data = WireInit(0.U(encRowBits.W))
   when (lb_write_arb.io.out.fire) {
     lb.write(lb_write_arb.io.out.bits.lb_addr, lb_write_arb.io.out.bits.data)
-  } .otherwise {
-    lb_read_arb.io.out.ready := true.B
-    when (lb_read_arb.io.out.fire) {
-      lb_read_data := lb.read(lb_read_arb.io.out.bits.lb_addr)
-    }
   }
+  */
+
   def widthMap[T <: Data](f: Int => T) = VecInit((0 until memWidth).map(f))
 
 
@@ -610,7 +626,7 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
 
   val meta_write_arb = Module(new Arbiter(new L1MetaWriteReq           , cfg.nMSHRs))
   val meta_read_arb  = Module(new Arbiter(new L1MetaReadReq            , cfg.nMSHRs))
-  val wb_req_arb     = Module(new Arbiter(new WritebackReq(edge.bundle), cfg.nMSHRs))
+  val wb_req_arb     = Module(new RRArbiter(new WritebackReq(edge.bundle), cfg.nMSHRs))
   val replay_arb     = Module(new Arbiter(new BoomDCacheReqInternal    , cfg.nMSHRs))
   val resp_arb       = Module(new Arbiter(new BoomDCacheResp           , cfg.nMSHRs + nIOMSHRs))
   val refill_arb     = Module(new Arbiter(new L1DataWriteReq           , cfg.nMSHRs))
@@ -664,6 +680,7 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
     mshr.io.prober_state := io.prober_state
 
     mshr.io.wb_resp      := io.wb_resp
+    mshr.io.release_in_progress := io.release_in_progress
 
     meta_write_arb.io.in(i) <> mshr.io.meta_write
     meta_read_arb.io.in(i)  <> mshr.io.meta_read
@@ -743,7 +760,7 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
 
   mmio_alloc_arb.io.out.ready := req.valid && !cacheable
 
-  TLArbiter.lowestFromSeq(edge, io.mem_acquire, mshrs.map(_.io.mem_acquire) ++ mmios.map(_.io.mem_access))
+  TLArbiter.robin(edge, io.mem_acquire, (mshrs.map(_.io.mem_acquire) ++ mmios.map(_.io.mem_access)):_*)
   TLArbiter.lowestFromSeq(edge, io.mem_finish,  mshrs.map(_.io.mem_finish))
 
   val respq = Module(new BranchKillableQueue(new BoomDCacheResp, 4, u => u.uses_ldq, flow = false))

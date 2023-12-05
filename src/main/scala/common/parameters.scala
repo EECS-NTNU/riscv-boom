@@ -101,7 +101,10 @@ case class BoomCoreParams(
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
   enableBranchPrintf: Boolean = false,
-  enableMemtracePrintf: Boolean = false
+  enableMemtracePrintf: Boolean = false,
+
+  enableWritebackPipelining: Boolean = false,
+  issueAcquireUnderRelease: Boolean = false,
 
 // DOC include end: BOOM Parameters
 ) extends freechips.rocketchip.tile.CoreParams
@@ -236,6 +239,8 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
 
   val enableFastLoadUse = boomParams.enableFastLoadUse
   val enablePrefetching = boomParams.enablePrefetching
+  val enableWbPipelining = boomParams.enableWritebackPipelining
+  val issueAcquireUnderRelease = boomParams.issueAcquireUnderRelease
   val nLBEntries = dcacheParams.nMSHRs
 
   //************************************
