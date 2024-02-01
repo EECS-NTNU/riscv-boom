@@ -33,14 +33,30 @@ class WithInOrderBranchResolution() extends Config((site, here, up) => {
 class WithRenameTaintTrackingEnabled() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
-      core = tp.tileParams.core.copy(enableRenameTaintTracking = true)))
+      core = tp.tileParams.core.copy(enableRenameTaintTracking = true,
+                                    traceStats = true)))
   }
 })
 
 class WithRegisterTaintTrackingEnabled() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
-      core = tp.tileParams.core.copy(enableRegisterTaintTracking = true)))
+      core = tp.tileParams.core.copy(enableRegisterTaintTracking = true,
+                                    traceStats = true)))
+  }
+})
+
+class WithTraceStats() extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(traceStats = true)))
+  }
+})
+
+class WithTraceDebug() extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(traceDebug = true)))
   }
 })
 

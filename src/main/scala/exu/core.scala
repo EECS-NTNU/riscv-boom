@@ -142,6 +142,8 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     fp_pipeline.io.wb_pdsts  := DontCare
   }
 
+  val traceMode = if (traceDebug) TRACE_DEBUG else if (traceStats) TRACE_STATS else NO_TRACE
+
   val numIrfWritePorts        = exe_units.numIrfWritePorts + memWidth
   val numLlIrfWritePorts      = exe_units.numLlIrfWritePorts
   val numIrfReadPorts         = exe_units.numIrfReadPorts
@@ -1646,7 +1648,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
   }
 
-  if (io.traceDoctor.traceWidth >= 190) {//(64 + 64 + (coreWidth * 64))) {
+  if (traceMode == TRACE_DEBUG) { //((14*ldqAddrSz) + 134)) {
     // If TracerV is also included, this assignment is redundant
     for (w <- 0 until coreWidth) {
       io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx
@@ -1660,6 +1662,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
         )(vaddrBits - 1, 0),xLen)
     }
 
+    
     val traceValids = RegNext(rob.io.commit.arch_valids)
     val traceTimestamp = RegNext(debug_tsc_reg)
     val coreStalled = RegNext(csr.io.csr_stall)
@@ -1733,8 +1736,11 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     traceData.misLDQ              := misLDQ
 
     io.traceDoctor.valid := true.B
-    io.traceDoctor.bits := traceData.asUInt.asBools
+    io.traceDoctor.bits := traceData.asUInt().pad(io.traceDoctor.traceWidth).asBools
 
+  }
+  if (traceMode == TRACE_STATS) {
+    
   }
 
   if (usingTrace) {

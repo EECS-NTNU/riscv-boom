@@ -103,6 +103,8 @@ case class BoomCoreParams(
   numTaintWakeupPorts: Int = 2,
   enableCheckpointTaints: Boolean = false,
   inOrderBranchResolution: Boolean = false,
+  traceDebug: Boolean = false,
+  traceStats: Boolean = false,
 
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
@@ -185,6 +187,8 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
   val enableRegisterTaintTracking = boomParams.enableRegisterTaintTracking
   val enableCheckpointTaints   = boomParams.enableCheckpointTaints
   val inOrderBranchResolution = boomParams.inOrderBranchResolution
+  val traceDebug = boomParams.traceDebug
+  val traceStats = boomParams.traceStats
 
   require(!(enableRegisterTaintTracking || enableRenameTaintTracking) || 
           (enableCheckpointTaints != inOrderBranchResolution), "Must be unsafe, or have either checkpoint tainting or in-order branches")

@@ -131,6 +131,13 @@ class RegisterTaintTracker(
         isBetween
     }
 
+    //Stat Information
+    val taints_calc_total = RegInit(0.U(40.W))
+    val yrot_r_on_req = RegInit(0.U(40.W))
+
+    taints_calc_total := taints_calc_total + PopCount(io.req_valids)
+    yrot_r_on_req := yrot_r_on_req + PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
+
     // Taint files for int and fp registers
     val int_taint_file              = Reg(Vec(numIntPhysRegs, new TaintEntry()))
     val fp_taint_file               = Reg(Vec(numFpPhysRegs, new TaintEntry()))

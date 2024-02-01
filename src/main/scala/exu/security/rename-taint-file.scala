@@ -205,6 +205,13 @@ class RenameTaintTracker(
         (t1, t2, t3)
     }
 
+    //Stat information
+    val taints_calc_total = RegInit(0.U(40.W))
+    val yrot_r_on_dis = RegInit(0.U(40.W))
+
+    taints_calc_total := taints_calc_total + PopCount(io.dis_fire)
+    yrot_r_on_dis := yrot_r_on_dis + PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (d, r) => d && r })
+
     // Taint files for int and fp registers
     val int_taint_file              = Reg(Vec(numLregs, new TaintEntry()))
     val fp_taint_file               = Reg(Vec(numLregs, new TaintEntry()))

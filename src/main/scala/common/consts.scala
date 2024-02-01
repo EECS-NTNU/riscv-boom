@@ -122,6 +122,10 @@ trait ScalarOpConstants
   val RT_X     = 2.U(2.W) // not-a-register (but shouldn't get a busy-bit, etc.)
                              // TODO rename RT_NAR
 
+  val NO_TRACE = 0.U(2.W)
+  val TRACE_DEBUG = 1.U(2.W)
+  val TRACE_STATS = 2.U(2.W) 
+
   // Micro-op opcodes
   // TODO change micro-op opcodes into using enum
   val UOPC_SZ = 7
