@@ -34,6 +34,10 @@ class RegisterTaintTracker(
 
         val ldq_btc_head   = Input(UInt(ldqAddrSz.W))
         val ldq_tail       = Input(UInt(ldqAddrSz.W))  
+
+        val taints_calc = Output(UInt(4.W))
+        val yrot_r_on_req = Output(UInt(4.W))
+        val tainted_loads = Output(UInt(4.W))
     })
 
     val int_type = RT_FIX
@@ -132,11 +136,15 @@ class RegisterTaintTracker(
     }
 
     //Stat Information
-    val taints_calc_total = RegInit(0.U(40.W))
-    val yrot_r_on_req = RegInit(0.U(40.W))
+    //val taints_calc_total = RegInit(0.U(40.W))
+    //val yrot_r_on_req = RegInit(0.U(40.W))
 
-    taints_calc_total := taints_calc_total + PopCount(io.req_valids)
-    yrot_r_on_req := yrot_r_on_req + PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
+    //taints_calc_total := taints_calc_total + PopCount(io.req_valids)
+    //yrot_r_on_req := yrot_r_on_req + PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
+    io.taints_calc := PopCount(io.req_valids)
+    io.yrot_r_on_req := PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
+    (io.req_valids zip io.req_yrot_r) map { case (r, y) => r && !y} zip (io.req_uops map (u => u.uses_ldq)) map { case (t, l) => t && l}
+    io.tainted_loads := PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && !y} zip (io.req_uops map (u => u.uses_ldq)) map { case (t, l) => t && l})
 
     // Taint files for int and fp registers
     val int_taint_file              = Reg(Vec(numIntPhysRegs, new TaintEntry()))

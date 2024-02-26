@@ -42,7 +42,7 @@ import boom.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.exu.FUConstants._
 import boom.util._
 
-class TraceBundle(implicit p: Parameters) extends BoomBundle {
+class TraceDebugBundle(implicit p: Parameters) extends BoomBundle {
 
   val traceTimestamp = UInt(64.W)
   
@@ -101,6 +101,22 @@ class TraceBundle(implicit p: Parameters) extends BoomBundle {
   val br_mispredict = Bool()
   val core_exception = Bool()
   val misLDQ = UInt(7.W)
+}
+
+class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
+  val numCommit = UInt(4.W)
+  val isBranch = Vec(4, Bool())
+  val branchLatency = Vec(4, UInt(16.W))
+  
+  val filledMSHRs   = UInt(4.W)
+  
+  val memAccesses   = UInt(2.W)
+  val hitsInCache   = UInt(4.W)
+  val missesInCache = UInt(4.W)
+
+  val taintsCalced = UInt(4.W)
+  val yrotsOnCalc  = UInt(4.W)
+  val taintedLoads = UInt(4.W)
 }
 
 /**
@@ -830,6 +846,8 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     } else {
       dis_uops(w).yrot_r := true.B 
     }
+
+    dis_uops(w).stats.branchDispatched := debug_tsc_reg
     // End STT
   }
   dontTouch(dis_uops)
@@ -1676,7 +1694,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceAddresses.map(a => a(63, 0).pad(64)).reverse.asUInt()
     ).reverse).pad(io.traceDoctor.traceWidth).asBools */
     
-    val traceData = Reg(new TraceBundle)
+    val traceData = Reg(new TraceDebugBundle)
 
     traceData.traceTimestamp        := traceTimestamp(63, 0).pad(64)
     traceData.ldq_head              := io.lsu.ldq_head
@@ -1740,7 +1758,41 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
 
   }
   if (traceMode == TRACE_STATS) {
-    
+      val traceStats = Reg(new TraceStatsBundle)
+
+      traceStats.numCommit := PopCount(rob.io.commit.valids)
+      traceStats.isBranch := rob.io.commit.uops map (u => u.is_br)
+      
+      for (w <- 0 until coreWidth) {
+        val stats = rob.io.commit.uops(w).stats
+
+        when((stats.branchResolved - stats.branchDispatched) >= (1.U << 15.U)) {
+          traceStats.branchLatency(w) := 1.U << 15.U
+        }.otherwise {
+          traceStats.branchLatency(w) := stats.branchResolved - stats.branchDispatched
+        }
+      }
+
+      traceStats.filledMSHRs := io.lsu.free_mshrs
+
+      traceStats.memAccesses := io.lsu.mem_accesses
+      traceStats.hitsInCache := io.lsu.cache_hits
+      traceStats.missesInCache := io.lsu.cache_misses
+
+      if (enableRegisterTaintTracking) {
+        traceStats.taintsCalced := reg_taint_tracker.io.taints_calc
+        traceStats.yrotsOnCalc := reg_taint_tracker.io.yrot_r_on_req
+        traceStats.taintedLoads := reg_taint_tracker.io.tainted_loads
+      }
+      if (enableRenameTaintTracking) {
+        traceStats.taintsCalced := ren_taint_tracker.io.taints_calc
+        traceStats.yrotsOnCalc := ren_taint_tracker.io.yrot_r_on_dis
+        traceStats.taintedLoads := ren_taint_tracker.io.tainted_loads
+      }
+
+      io.traceDoctor.valid := true.B
+      io.traceDoctor.bits := traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
+
   }
 
   if (usingTrace) {

@@ -49,6 +49,8 @@ class IssueSlotIO(val numWakeupPorts: Int)(implicit p: Parameters) extends BoomB
   val yrot = Input(Valid(UInt(ldqAddrSz.W)))
   val yrot_r = Input(Bool())
 
+  val blocked_taint = Output(Bool())
+
   //Taint debug
   val ldq_head = Input(UInt(ldqAddrSz.W))
   val ldq_tail = Input(UInt(ldqAddrSz.W))
@@ -295,6 +297,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   // Request Logic - yrot_r is STT - yrot always high
   // if STT is disabled
   io.request := is_valid && p1 && p2 && p3 && ppred && yrot_r && !io.kill
+  io.blocked_taint := is_valid && p1 && p2 && p3 && ppred && !io.kill && !yrot_r
   val high_priority = slot_uop.is_br || slot_uop.is_jal || slot_uop.is_jalr
   io.request_hp := io.request && high_priority
 

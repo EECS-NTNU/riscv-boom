@@ -41,6 +41,7 @@ class MicroOp(implicit p: Parameters) extends BoomBundle
   val iq_type          = UInt(IQT_SZ.W)        // which issue unit do we use?
   val fu_code          = UInt(FUConstants.FUC_SZ.W) // which functional unit do we use?
   val ctrl             = new CtrlSignals
+  val stats            = new StatSignals
 
   // What is the next state of this uop in the issue window? useful
   // for the compacting queue.
@@ -188,6 +189,12 @@ class CtrlSignals extends Bundle()
   val is_load     = Bool()   // will invoke TLB address lookup
   val is_sta      = Bool()   // will invoke TLB address lookup
   val is_std      = Bool()
+}
+
+class StatSignals extends Bundle()
+{
+  val branchDispatched = UInt(64.W)
+  val branchResolved = UInt(64.W)
 }
 
 
