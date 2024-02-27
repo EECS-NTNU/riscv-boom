@@ -1758,6 +1758,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
 
   }
   if (traceMode == TRACE_STATS) {
+    // If TracerV is also included, this assignment is redundant
+    for (w <- 0 until coreWidth) {
+      io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx
+    }
       val traceStats = Reg(new TraceStatsBundle)
 
       traceStats.numCommit := PopCount(rob.io.commit.valids)
@@ -1779,6 +1783,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.hitsInCache := io.lsu.cache_hits
       traceStats.missesInCache := io.lsu.cache_misses
 
+      traceStats.taintsCalced := 0.U
+      traceStats.yrotsOnCalc := 0.U
+      traceStats.taintedLoads := 0.U
+
       if (enableRegisterTaintTracking) {
         traceStats.taintsCalced := reg_taint_tracker.io.taints_calc
         traceStats.yrotsOnCalc := reg_taint_tracker.io.yrot_r_on_req
@@ -1791,7 +1799,23 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       }
 
       io.traceDoctor.valid := true.B
-      io.traceDoctor.bits := traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
+      io.traceDoctor.bits := 
+        Cat(Seq(
+          traceStats.numCommit.pad(8),
+          traceStats.isBranch.asUInt.pad(8),
+          traceStats.branchLatency.asUInt.pad(64),
+          traceStats.filledMSHRs.pad(8),
+          traceStats.memAccesses.pad(8),
+          traceStats.hitsInCache.pad(8),
+          traceStats.missesInCache.pad(8),
+          traceStats.taintsCalced.pad(8),
+          traceStats.yrotsOnCalc.pad(8),
+          traceStats.taintedLoads.pad(8)
+        )).pad(io.traceDoctor.traceWidth).asBools()
+          
+          
+          
+      // traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
 
   }
 
