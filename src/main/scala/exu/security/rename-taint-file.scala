@@ -209,17 +209,6 @@ class RenameTaintTracker(
         (t1, t2, t3)
     }
 
-    //Stat information
-    //val taints_calc_total = RegInit(0.U(40.W))
-    //val yrot_r_on_dis = RegInit(0.U(40.W))
-
-
-    //taints_calc_total := taints_calc_total + PopCount(io.dis_fire)
-    //yrot_r_on_dis := yrot_r_on_dis + PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (d, r) => d && r })
-    io.taints_calc := PopCount(io.dis_fire)
-    io.yrot_r_on_dis := PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (d, r) => d && r })
-    io.tainted_loads := PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (r, y) => r && !y} zip (ren2_uops map (u => u.uses_ldq)) map { case (t, l) => t && l})
-
     // Taint files for int and fp registers
     val int_taint_file              = Reg(Vec(numLregs, new TaintEntry()))
     val fp_taint_file               = Reg(Vec(numLregs, new TaintEntry()))
@@ -490,6 +479,19 @@ class RenameTaintTracker(
             {case (valid, twake) => valid && !(twake.valid && (twake.bits === last_cycle_fp_snapshot(i).ldq_idx))}
         }
     }
+
+
+    //Stat information
+    //val taints_calc_total = RegInit(0.U(40.W))
+    //val yrot_r_on_dis = RegInit(0.U(40.W))
+
+
+    //taints_calc_total := taints_calc_total + PopCount(io.dis_fire)
+    //yrot_r_on_dis := yrot_r_on_dis + PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (d, r) => d && r })
+    io.taints_calc := PopCount(io.dis_fire)
+    io.yrot_r_on_dis := PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (d, r) => d && r })
+    io.tainted_loads := PopCount((io.dis_fire zip io.ren2_yrot_r) map { case (r, y) => r && !y} zip (ren2_uops map (u => u.uses_ldq)) map { case (t, l) => t && l})
+
 
     dontTouch(int_taint_file)
     dontTouch(fp_taint_file)
