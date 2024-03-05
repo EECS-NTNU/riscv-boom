@@ -215,9 +215,14 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
 
   // wb arbiter for the 0th ll writeback
   // TODO: should this be a multi-arb?
-  val ll_wbarb         = Module(new Arbiter(new ExeUnitResp(xLen), 1 +
+  val ll_mem_wbarb = if (enableNDA) Module(new Arbiter(new MemExeUnitResp(xLen), 1 +
                                                                    (if (usingFPU) 1 else 0) +
                                                                    (if (usingRoCC) 1 else 0)))
+                     else null
+  val ll_wbarb   = if (!enableNDA) Module(new Arbiter(new ExeUnitResp(xLen), 1 +
+                                                                   (if (usingFPU) 1 else 0) +
+                                                                   (if (usingRoCC) 1 else 0)))
+                      else null
   val iregister_read   = Module(new RegisterRead(
                            issue_units.map(_.issueWidth).sum,
                            exe_units.withFilter(_.readsIrf).map(_.supportedFuncUnits),
@@ -322,7 +327,8 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
 
   // Load/Store Unit & ExeUnits
   val mem_units = exe_units.memory_units
-  val mem_resps = mem_units.map(_.io.ll_iresp)
+  val mem_resps = if (!enableNDA) mem_units.map(_.io.ll_iresp) else null 
+  val mem_nda_resps = if(enableNDA) mem_units.map(_.io.ll_mem_iresp) else null
   for (i <- 0 until memWidth) {
     mem_units(i).io.lsu_io <> io.lsu.exe(i)
   }
@@ -995,18 +1001,51 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   var iss_wu_idx = 1
   var ren_wu_idx = 1
   // The 0th wakeup port goes to the ll_wbarb
+  if (enableNDA) {
+  int_iss_wakeups(0).valid := ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.uop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
+  int_iss_wakeups(0).bits  := ll_mem_wbarb.io.out.bits
+
+  int_ren_wakeups(0).valid := ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.uop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
+  int_ren_wakeups(0).bits  := ll_mem_wbarb.io.out.bits
+  } else {
   int_iss_wakeups(0).valid := ll_wbarb.io.out.fire && ll_wbarb.io.out.bits.uop.dst_rtype === RT_FIX
   int_iss_wakeups(0).bits  := ll_wbarb.io.out.bits
 
   int_ren_wakeups(0).valid := ll_wbarb.io.out.fire && ll_wbarb.io.out.bits.uop.dst_rtype === RT_FIX
   int_ren_wakeups(0).bits  := ll_wbarb.io.out.bits
 
+  }
+
   for (i <- 1 until memWidth) {
+    if (enableNDA) {
+      
+    int_iss_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.uop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
+    int_iss_wakeups(i).bits.data := mem_nda_resps(i).bits.data
+    int_iss_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
+    int_iss_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
+    int_iss_wakeups(i).bits.uop := mem_nda_resps(i).bits.uop
+    int_iss_wakeups(i).bits.uop.pdst := Mux(mem_nda_resps(i).bits.splitDataAndBroadcast,
+                                  mem_nda_resps(i).bits.broadcastPdst, 
+                                  mem_nda_resps(i).bits.uop.pdst)
+
+
+    int_ren_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.uop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
+    int_ren_wakeups(i).bits.data := mem_nda_resps(i).bits.data
+    int_ren_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
+    int_ren_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
+    int_ren_wakeups(i).bits.uop := mem_nda_resps(i).bits.uop
+    int_ren_wakeups(i).bits.uop.pdst := Mux(mem_nda_resps(i).bits.splitDataAndBroadcast,
+                                  mem_nda_resps(i).bits.broadcastPdst, 
+                                  mem_nda_resps(i).bits.uop.pdst)
+    } else {
+
     int_iss_wakeups(i).valid := mem_resps(i).valid && mem_resps(i).bits.uop.dst_rtype === RT_FIX
     int_iss_wakeups(i).bits  := mem_resps(i).bits
 
     int_ren_wakeups(i).valid := mem_resps(i).valid && mem_resps(i).bits.uop.dst_rtype === RT_FIX
     int_ren_wakeups(i).bits  := mem_resps(i).bits
+    }
+
     iss_wu_idx += 1
     ren_wu_idx += 1
   }
@@ -1362,8 +1401,16 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   //-------------------------------------------------------------
 
   var w_cnt = 1
+  if (!enableNDA) {
   iregfile.io.write_ports(0) := WritePort(ll_wbarb.io.out, ipregSz, xLen, RT_FIX)
-  ll_wbarb.io.in(0) <> mem_resps(0)
+  } else {
+  iregfile.io.write_ports(0) := WritePort(ll_mem_wbarb.io.out, ipregSz, xLen, RT_FIX, false.B)
+  }
+  if (!enableNDA) {
+    ll_wbarb.io.in(0) <> mem_resps(0)
+  } else {
+    ll_mem_wbarb.io.in(0) <> mem_nda_resps(0)
+  }
   assert (ll_wbarb.io.in(0).ready) // never backpressure the memory unit.
   for (i <- 1 until memWidth) {
     iregfile.io.write_ports(w_cnt) := WritePort(mem_resps(i), ipregSz, xLen, RT_FIX)
@@ -1440,7 +1487,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   rob.io.debug_wb_wdata(0)  := ll_wbarb.io.out.bits.data
   var cnt = 1
   for (i <- 1 until memWidth) {
-    val mem_uop = mem_resps(i).bits.uop
+    val mem_uop = if (!enableNDA) mem_resps(i).bits.uop else mem_nda_resps(i).bits.uop
     rob.io.wb_resps(cnt).valid := mem_resps(i).valid && !(mem_uop.uses_stq && !mem_uop.is_amo)
     rob.io.wb_resps(cnt).bits  := mem_resps(i).bits
     rob.io.debug_wb_valids(cnt) := mem_resps(i).valid && mem_uop.dst_rtype =/= RT_X
@@ -1666,7 +1713,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
   }
 
-  if (traceMode == TRACE_DEBUG) { //((14*ldqAddrSz) + 134)) {
+  if (traceMode == TRACE_DEBUG && io.traceDoctor.traceWidth >= 512) { //((14*ldqAddrSz) + 134)) {
     // If TracerV is also included, this assignment is redundant
     for (w <- 0 until coreWidth) {
       io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx
@@ -1757,7 +1804,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     io.traceDoctor.bits := traceData.asUInt().pad(io.traceDoctor.traceWidth).asBools
 
   }
-  if (traceMode == TRACE_STATS) {
+  if (traceMode == TRACE_STATS && io.traceDoctor.traceWidth >= 512) {
     // If TracerV is also included, this assignment is redundant
     for (w <- 0 until coreWidth) {
       io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx

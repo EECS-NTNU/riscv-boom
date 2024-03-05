@@ -52,7 +52,7 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.Str
 
 import boom.common._
-import boom.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, ExeUnitResp}
+import boom.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, MemExeUnitResp, ExeUnitResp}
 import boom.util.{BoolToChar, AgePriorityEncoder, IsKilledByBranch, GetNewBrMask, WrapInc, IsOlder, UpdateBrMask, WrapAdd}
 
 class LSUExeIO(implicit p: Parameters) extends BoomBundle()(p)
@@ -60,8 +60,10 @@ class LSUExeIO(implicit p: Parameters) extends BoomBundle()(p)
   // The "resp" of the maddrcalc is really a "req" to the LSU
   val req       = Flipped(new ValidIO(new FuncUnitResp(xLen)))
   // Send load data to regfiles
-  val iresp    = new DecoupledIO(new boom.exu.ExeUnitResp(xLen))
-  val fresp    = new DecoupledIO(new boom.exu.ExeUnitResp(xLen+1)) // TODO: Should this be fLen?
+  val iresp    = if (!enableNDA) new DecoupledIO(new boom.exu.ExeUnitResp(xLen)) else null
+  val mem_iresp = if (enableNDA) new DecoupledIO(new boom.exu.MemExeUnitResp(xLen)) else null
+  val fresp    = if (!enableNDA) new DecoupledIO(new boom.exu.ExeUnitResp(xLen+1))  else null
+  val mem_fresp = if (enableNDA) new DecoupledIO(new boom.exu.MemExeUnitResp(xLen+1)) else null
 }
 
 class BoomDCacheReq(implicit p: Parameters) extends BoomBundle()(p)
@@ -215,6 +217,9 @@ class LDQEntry(implicit p: Parameters) extends BoomBundle()(p)
   val d_shadow_mask       = UInt(numStqEntries.W)
   //This is just a duplicate for br_mask
   val c_shadow_mask       = UInt(maxBrCount.W)
+
+  //NDA
+  val needs_to_rebroadcast = Bool()
 }
 
 class STQEntry(implicit p: Parameters) extends BoomBundle()(p)
@@ -1316,6 +1321,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   // Task 4: Speculatively wakeup loads 1 cycle before they come back
   for (w <- 0 until memWidth) {
     io.core.spec_ld_wakeup(w).valid := enableFastLoadUse.B          &&
+                                       (!enableNDA.B || isNonSpeculative(ldq(mem_incoming_uop(w).ldq_idx).bits))
                                        fired_load_incoming(w)       &&
                                        !mem_incoming_uop(w).fp_val  &&
                                        mem_incoming_uop(w).pdst =/= 0.U
@@ -1329,6 +1335,10 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   //-------------------------------------------------------------
   //-------------------------------------------------------------
 
+  def isNonSpeculative(e : LDQEntry) : Bool = {
+    return e.uop.br_mask === 0.U && e.st_addr_mask === 0.U
+  }
+
   for (w <- 0 until numTaintWakeupPorts) {
     io.core.taint_wakeup_port(w).valid := false.B
     io.core.taint_wakeup_port(w).bits := 0.U
@@ -1337,7 +1347,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     val valid = io.core.taint_wakeup_port.slice(0, w).map (tw => tw.valid)
                 .foldLeft(true.B){case (v, tw) => v && tw}
 
-    when(valid && ldq_e.valid && ldq_e.bits.uop.br_mask === 0.U && ldq_e.bits.st_addr_mask === 0.U) {
+    when(valid && ldq_e.valid && isNonSpeculative(ldq_e.bits)) {
       io.core.taint_wakeup_port(w).valid := true.B
       io.core.taint_wakeup_port(w).bits := WrapAdd(ldq_yrot_idx, w.U, numLdqEntries)  
     }
@@ -1345,6 +1355,32 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   ldq_yrot_idx := WrapAdd(ldq_yrot_idx, PopCount(io.core.taint_wakeup_port map (p => p.valid)), numLdqEntries)
   io.core.ldq_btc_head := ldq_yrot_idx
+
+  val canBroadcastHead = Wire(Vec(memWidth, Bool()))
+  val canIncrementHead = Wire(Vec(memWidth, Bool()))
+
+  for (w <- 0 until memWidth) {
+    canBroadcastHead(w) := false.B
+    canIncrementHead(w) := false.B
+  }
+
+  if (enableNDA) {
+
+  for (w <- 0 until memWidth) {
+    val ldq_e = ldq(WrapAdd(ldq_yrot_idx, w.U, numLdqEntries))
+    val valid = canIncrementHead.slice(0, w).foldLeft(true.B){case (v, w) => v && w}
+
+    when (valid && ldq_e.valid && isNonSpeculative(ldq_e.bits)) {
+      canIncrementHead(w) := true.B
+      when(ldq_e.bits.needs_to_rebroadcast) {
+        canBroadcastHead(w) := true.B
+      }
+    }
+  }
+    
+  }
+
+
 
 
   //-------------------------------------------------------------
@@ -1401,6 +1437,21 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         io.core.exe(w).iresp.bits.data := io.dmem.resp(w).bits.data
         io.core.exe(w).fresp.valid     := send_fresp
         io.core.exe(w).fresp.bits.data := io.dmem.resp(w).bits.data
+
+        if (enableNDA) {
+        io.core.exe(w).mem_iresp.bits.uop  := ldq(ldq_idx).bits.uop
+        io.core.exe(w).mem_fresp.bits.uop  := ldq(ldq_idx).bits.uop
+        io.core.exe(w).mem_iresp.valid     := send_iresp
+        io.core.exe(w).mem_iresp.bits.data := io.dmem.resp(w).bits.data
+        io.core.exe(w).mem_fresp.valid     := send_fresp
+        io.core.exe(w).mem_fresp.bits.data := io.dmem.resp(w).bits.data
+
+        io.core.exe(w).mem_iresp.bits.noBroadcast := !isNonSpeculative(ldq(ldq_idx).bits) && !canBroadcastHead(w)
+        io.core.exe(w).mem_fresp.bits.noBroadcast := !isNonSpeculative(ldq(ldq_idx).bits) && !canBroadcastHead(w)
+
+        ldq(ldq_idx).bits.needs_to_rebroadcast := !isNonSpeculative(ldq(ldq_idx).bits)
+
+        }
 
         assert(send_iresp ^ send_fresp)
         dmem_resp_fired(w) := true.B

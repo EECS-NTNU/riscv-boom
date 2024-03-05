@@ -103,6 +103,7 @@ case class BoomCoreParams(
   numTaintWakeupPorts: Int = 2,
   enableCheckpointTaints: Boolean = false,
   inOrderBranchResolution: Boolean = false,
+  enableNDA: Boolean = false,
   traceDebug: Boolean = false,
   traceStats: Boolean = false,
 
@@ -187,12 +188,15 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
   val enableRegisterTaintTracking = boomParams.enableRegisterTaintTracking
   val enableCheckpointTaints   = boomParams.enableCheckpointTaints
   val inOrderBranchResolution = boomParams.inOrderBranchResolution
+  val enableNDA = boomParams.enableNDA
   val traceDebug = boomParams.traceDebug
   val traceStats = boomParams.traceStats
 
   require(!(enableRegisterTaintTracking || enableRenameTaintTracking) || 
           (enableCheckpointTaints != inOrderBranchResolution), "Must be unsafe, or have either checkpoint tainting or in-order branches")
   require(!(enableRenameTaintTracking && enableRegisterTaintTracking))
+  require(!(enableRegisterTaintTracking && enableNDA))
+  require(!(enableRenameTaintTracking && enableNDA))
 
   val numIntPhysRegs= boomParams.numIntPhysRegisters // size of the integer physical register file
   val numFpPhysRegs = boomParams.numFpPhysRegisters  // size of the floating point physical register file

@@ -23,6 +23,13 @@ import boom.lsu._
 // BOOM Config Fragments
 // ---------------------
 
+class WithNDAEnabled() extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(enableNDA = true)))
+  }
+})
+
 class WithInOrderBranchResolution() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
@@ -33,7 +40,8 @@ class WithInOrderBranchResolution() extends Config((site, here, up) => {
 class WithRenameTaintTrackingEnabled() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
-      core = tp.tileParams.core.copy(enableRenameTaintTracking = true)))
+      core = tp.tileParams.core.copy(enableRenameTaintTracking = true,
+                                     enableCheckpointTaints = true)))
   }
 })
 

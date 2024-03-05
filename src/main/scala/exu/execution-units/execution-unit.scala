@@ -43,6 +43,16 @@ class ExeUnitResp(val dataWidth: Int)(implicit p: Parameters) extends BoomBundle
   val fflags = new ValidIO(new FFlagsResp) // write fflags to ROB // TODO: Do this better
 }
 
+class MemExeUnitResp(override val dataWidth: Int)(implicit p: Parameters) extends ExeUnitResp(
+  dataWidth = dataWidth
+)
+{
+  val noBroadcast = Bool()
+  val noData = Bool()
+  val splitDataAndBroadcast = Bool()
+  val broadcastPdst = UInt(maxPregSz.W)
+}
+
 /**
  * Floating Point flag response
  */
@@ -109,8 +119,14 @@ abstract class ExecutionUnit(
 
     val iresp    = if (writesIrf)   new DecoupledIO(new ExeUnitResp(dataWidth)) else null
     val fresp    = if (writesFrf)   new DecoupledIO(new ExeUnitResp(dataWidth)) else null
-    val ll_iresp = if (writesLlIrf) new DecoupledIO(new ExeUnitResp(dataWidth)) else null
-    val ll_fresp = if (writesLlFrf) new DecoupledIO(new ExeUnitResp(dataWidth)) else null
+    val ll_iresp = if (writesLlIrf && !enableNDA) new DecoupledIO(new ExeUnitResp(dataWidth))
+                   else null
+    val ll_mem_iresp = if (writesLlIrf && enableNDA) new DecoupledIO(new MemExeUnitResp(dataWidth))
+                       else null
+    val ll_fresp = if (writesLlFrf && !enableNDA) new DecoupledIO(new ExeUnitResp(dataWidth))
+                   else null
+    val ll_mem_fresp = if (writesLlFrf && enableNDA) new DecoupledIO(new MemExeUnitResp(dataWidth))
+                   else null
 
 
     val bypass   = Output(Vec(numBypassStages, Valid(new ExeUnitResp(dataWidth))))

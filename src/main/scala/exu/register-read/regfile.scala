@@ -60,6 +60,17 @@ object WritePort
      enq.ready       := true.B
      wport
   }
+
+  def apply(enq: DecoupledIO[MemExeUnitResp], addrWidth: Int, dataWidth: Int, rtype: UInt, dud: Bool)
+    (implicit p: Parameters): Valid[RegisterFileWritePort] = {
+      val wport = Wire(Valid(new RegisterFileWritePort(addrWidth, dataWidth)))
+
+      wport.valid := enq.valid && enq.bits.uop.dst_rtype === rtype && !enq.bits.noData
+      wport.bits.addr := enq.bits.uop.pdst
+      wport.bits.data := enq.bits.data
+      enq.ready := true.B
+      wport
+    }
 }
 
 /**
