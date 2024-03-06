@@ -405,9 +405,17 @@ class ALUExeUnit(
 
     io.lsu_io.req := maddrcalc.io.resp
 
+    if (!enableNDA) {
     io.ll_iresp <> io.lsu_io.iresp
+    } else {
+      io.ll_mem_iresp <> io.lsu_io.mem_iresp
+    }
     if (usingFPU) {
-      io.ll_fresp <> io.lsu_io.fresp
+      if (!enableNDA) {
+        io.ll_fresp <> io.lsu_io.fresp
+      } else {
+        io.ll_mem_fresp <> io.lsu_io.mem_fresp
+      }
     }
   }
 

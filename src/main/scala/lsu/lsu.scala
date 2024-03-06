@@ -1321,7 +1321,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   // Task 4: Speculatively wakeup loads 1 cycle before they come back
   for (w <- 0 until memWidth) {
     io.core.spec_ld_wakeup(w).valid := enableFastLoadUse.B          &&
-                                       (!enableNDA.B || isNonSpeculative(ldq(mem_incoming_uop(w).ldq_idx).bits))
+                                       (!enableNDA.B || isNonSpeculative(ldq(mem_incoming_uop(w).ldq_idx).bits)) &&
                                        fired_load_incoming(w)       &&
                                        !mem_incoming_uop(w).fp_val  &&
                                        mem_incoming_uop(w).pdst =/= 0.U
