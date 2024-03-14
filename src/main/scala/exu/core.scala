@@ -153,7 +153,11 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   // ********************************************************
   // Clear fp_pipeline before use
   if (usingFPU) {
+    if (!enableNDA) {
     fp_pipeline.io.ll_wports := DontCare
+    } else {
+    fp_pipeline.io.ll_mem_wports := DontCare
+    }
     fp_pipeline.io.wb_valids := DontCare
     fp_pipeline.io.wb_pdsts  := DontCare
   }
@@ -1001,19 +1005,25 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   var iss_wu_idx = 1
   var ren_wu_idx = 1
   // The 0th wakeup port goes to the ll_wbarb
-  if (enableNDA) {
-  int_iss_wakeups(0).valid := ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.uop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
-  int_iss_wakeups(0).bits  := ll_mem_wbarb.io.out.bits
-
-  int_ren_wakeups(0).valid := ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.uop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
-  int_ren_wakeups(0).bits  := ll_mem_wbarb.io.out.bits
-  } else {
+  if (!enableNDA) {
   int_iss_wakeups(0).valid := ll_wbarb.io.out.fire && ll_wbarb.io.out.bits.uop.dst_rtype === RT_FIX
   int_iss_wakeups(0).bits  := ll_wbarb.io.out.bits
 
   int_ren_wakeups(0).valid := ll_wbarb.io.out.fire && ll_wbarb.io.out.bits.uop.dst_rtype === RT_FIX
   int_ren_wakeups(0).bits  := ll_wbarb.io.out.bits
+  } else {
+  int_iss_wakeups(0).valid := 
+  ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.broadcastUop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
+  int_iss_wakeups(0).bits.data  := ll_mem_wbarb.io.out.bits.data
+  int_iss_wakeups(0).bits.predicated := ll_mem_wbarb.io.out.bits.predicated
+  int_iss_wakeups(0).bits.fflags := ll_mem_wbarb.io.out.bits.fflags
+  int_iss_wakeups(0).bits.uop := ll_mem_wbarb.io.out.bits.broadcastUop
 
+  int_ren_wakeups(0).valid := ll_mem_wbarb.io.out.fire && ll_mem_wbarb.io.out.bits.broadcastUop.dst_rtype === RT_FIX && !ll_mem_wbarb.io.out.bits.noBroadcast
+  int_ren_wakeups(0).bits.data  := ll_mem_wbarb.io.out.bits.data
+  int_ren_wakeups(0).bits.predicated := ll_mem_wbarb.io.out.bits.predicated
+  int_ren_wakeups(0).bits.fflags := ll_mem_wbarb.io.out.bits.fflags
+  int_ren_wakeups(0).bits.uop := ll_mem_wbarb.io.out.bits.broadcastUop
   }
 
   for (i <- 1 until memWidth) {
@@ -1023,20 +1033,14 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     int_iss_wakeups(i).bits.data := mem_nda_resps(i).bits.data
     int_iss_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
     int_iss_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
-    int_iss_wakeups(i).bits.uop := mem_nda_resps(i).bits.uop
-    int_iss_wakeups(i).bits.uop.pdst := Mux(mem_nda_resps(i).bits.splitDataAndBroadcast,
-                                  mem_nda_resps(i).bits.broadcastPdst, 
-                                  mem_nda_resps(i).bits.uop.pdst)
+    int_iss_wakeups(i).bits.uop := mem_nda_resps(i).bits.broadcastUop
 
 
     int_ren_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.uop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
     int_ren_wakeups(i).bits.data := mem_nda_resps(i).bits.data
     int_ren_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
     int_ren_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
-    int_ren_wakeups(i).bits.uop := mem_nda_resps(i).bits.uop
-    int_ren_wakeups(i).bits.uop.pdst := Mux(mem_nda_resps(i).bits.splitDataAndBroadcast,
-                                  mem_nda_resps(i).bits.broadcastPdst, 
-                                  mem_nda_resps(i).bits.uop.pdst)
+    int_ren_wakeups(i).bits.uop := mem_nda_resps(i).bits.broadcastUop
     } else {
 
     int_iss_wakeups(i).valid := mem_resps(i).valid && mem_resps(i).bits.uop.dst_rtype === RT_FIX
@@ -1411,9 +1415,17 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   } else {
     ll_mem_wbarb.io.in(0) <> mem_nda_resps(0)
   }
+  if (!enableNDA) {
   assert (ll_wbarb.io.in(0).ready) // never backpressure the memory unit.
+  } else {
+  assert (ll_mem_wbarb.io.in(0).ready) // never backpressure the memory unit.
+  }
   for (i <- 1 until memWidth) {
+    if (!enableNDA) {
     iregfile.io.write_ports(w_cnt) := WritePort(mem_resps(i), ipregSz, xLen, RT_FIX)
+    } else {
+    iregfile.io.write_ports(w_cnt) := WritePort(mem_nda_resps(i), ipregSz, xLen, RT_FIX)
+    }
     w_cnt += 1
   }
 
@@ -1459,12 +1471,25 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   }
 
   if (usingFPU) {
+    if (!enableNDA) {
     // Connect IFPU
     fp_pipeline.io.from_int  <> exe_units.ifpu_unit.io.ll_fresp
     // Connect FPIU
     ll_wbarb.io.in(1)        <> fp_pipeline.io.to_int
     // Connect FLDs
     fp_pipeline.io.ll_wports <> exe_units.memory_units.map(_.io.ll_fresp)
+    } else {
+    // Connect IFPU
+    fp_pipeline.io.from_int  <> exe_units.ifpu_unit.io.ll_mem_fresp
+    // Connect FPIU
+    ll_mem_wbarb.io.in(1)        <> fp_pipeline.io.to_int
+    ll_mem_wbarb.io.in(1).bits.noBroadcast := false.B
+    ll_mem_wbarb.io.in(1).bits.noData := false.B
+    ll_mem_wbarb.io.in(1).bits.splitDataAndBroadcast := false.B
+    ll_mem_wbarb.io.in(1).bits.broadcastUop := fp_pipeline.io.to_int.bits.uop
+    // Connect FLDs
+    fp_pipeline.io.ll_mem_wports <> exe_units.memory_units.map(_.io.ll_mem_fresp)
+    }
   }
   if (usingRoCC) {
     require(usingFPU)
@@ -1480,18 +1505,41 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   // Writeback
   // ---------
   // First connect the ll_wport
+  if (!enableNDA) {
   val ll_uop = ll_wbarb.io.out.bits.uop
   rob.io.wb_resps(0).valid  := ll_wbarb.io.out.valid && !(ll_uop.uses_stq && !ll_uop.is_amo)
   rob.io.wb_resps(0).bits   <> ll_wbarb.io.out.bits
   rob.io.debug_wb_valids(0) := ll_wbarb.io.out.valid && ll_uop.dst_rtype =/= RT_X
   rob.io.debug_wb_wdata(0)  := ll_wbarb.io.out.bits.data
+  } else {
+  val ll_uop = ll_mem_wbarb.io.out.bits.uop
+  rob.io.wb_resps(0).valid  := ll_mem_wbarb.io.out.valid && !(ll_uop.uses_stq && !ll_uop.is_amo) && !ll_mem_wbarb.io.out.bits.noBroadcast
+  rob.io.wb_resps(0).bits.uop := ll_mem_wbarb.io.out.bits.broadcastUop
+  rob.io.wb_resps(0).bits.data := ll_mem_wbarb.io.out.bits.data
+  rob.io.wb_resps(0).bits.predicated := ll_mem_wbarb.io.out.bits.predicated
+  rob.io.wb_resps(0).bits.fflags := ll_mem_wbarb.io.out.bits.fflags
+
+  rob.io.debug_wb_valids(0) := ll_mem_wbarb.io.out.valid && ll_uop.dst_rtype =/= RT_X && !ll_mem_wbarb.io.out.bits.noBroadcast
+  rob.io.debug_wb_wdata(0)  := ll_mem_wbarb.io.out.bits.data
+  }
   var cnt = 1
   for (i <- 1 until memWidth) {
-    val mem_uop = if (!enableNDA) mem_resps(i).bits.uop else mem_nda_resps(i).bits.uop
+    if (!enableNDA) {
+    val mem_uop = mem_resps(i).bits.uop
     rob.io.wb_resps(cnt).valid := mem_resps(i).valid && !(mem_uop.uses_stq && !mem_uop.is_amo)
     rob.io.wb_resps(cnt).bits  := mem_resps(i).bits
     rob.io.debug_wb_valids(cnt) := mem_resps(i).valid && mem_uop.dst_rtype =/= RT_X
     rob.io.debug_wb_wdata(cnt)  := mem_resps(i).bits.data
+    } else {
+    val mem_uop = mem_nda_resps(i).bits.uop 
+    rob.io.wb_resps(cnt).valid := mem_nda_resps(i).valid && !(mem_uop.uses_stq && !mem_uop.is_amo) && !mem_nda_resps(i).bits.noBroadcast
+    rob.io.wb_resps(cnt).bits.uop  := mem_nda_resps(i).bits.broadcastUop
+    rob.io.wb_resps(cnt).bits.data  := mem_nda_resps(i).bits.data
+    rob.io.wb_resps(cnt).bits.predicated  := mem_nda_resps(i).bits.predicated
+    rob.io.wb_resps(cnt).bits.fflags  := mem_nda_resps(i).bits.fflags
+    rob.io.debug_wb_valids(cnt) := mem_nda_resps(i).valid && mem_uop.dst_rtype =/= RT_X && !mem_nda_resps(i).bits.noBroadcast
+    rob.io.debug_wb_wdata(cnt)  := mem_nda_resps(i).bits.data
+    }
     cnt += 1
   }
   var f_cnt = 0 // rob fflags port index

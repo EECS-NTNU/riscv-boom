@@ -42,7 +42,8 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     val dis_uops         = Vec(dispatchWidth, Flipped(Decoupled(new MicroOp)))
 
     // +1 for recoding.
-    val ll_wports        = Flipped(Vec(memWidth, Decoupled(new ExeUnitResp(fLen+1))))// from memory unit
+    val ll_wports        = if (!enableNDA) Flipped(Vec(memWidth, Decoupled(new ExeUnitResp(fLen+1)))) else null// from memory unit
+    val ll_mem_wports    = if (enableNDA) Flipped(Vec(memWidth, Decoupled(new MemExeUnitResp(fLen+1)))) else null
     val from_int         = Flipped(Decoupled(new ExeUnitResp(fLen+1)))// from integer RF
     val to_sdq           = Decoupled(new ExeUnitResp(fLen))           // to Load/Store Unit
     val to_int           = Decoupled(new ExeUnitResp(xLen))           // to integer RF
@@ -214,31 +215,59 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   // **** Writeback Stage ****
   //-------------------------------------------------------------
 
-  val ll_wbarb = Module(new Arbiter(new ExeUnitResp(fLen+1), 2))
+  val ll_wbarb = if (!enableNDA) Module(new Arbiter(new ExeUnitResp(fLen+1), 2)) else null
+  val ll_mem_wbarb = if (enableNDA) Module(new Arbiter(new MemExeUnitResp(fLen+1), 2)) else null
 
 
+  val ifpu_resp = io.from_int
+  if (!enableNDA) {
   // Hookup load writeback -- and recode FP values.
   ll_wbarb.io.in(0) <> io.ll_wports(0)
   ll_wbarb.io.in(0).bits.data := recode(io.ll_wports(0).bits.data,
                                         io.ll_wports(0).bits.uop.mem_size =/= 2.U)
 
-  val ifpu_resp = io.from_int
   ll_wbarb.io.in(1) <> ifpu_resp
+  } else {
+  // Hookup load writeback -- and recode FP values.
+  ll_mem_wbarb.io.in(0) <> io.ll_mem_wports(0)
+  ll_mem_wbarb.io.in(0).bits.data := recode(io.ll_mem_wports(0).bits.data,
+                                        io.ll_mem_wports(0).bits.uop.mem_size =/= 2.U)
+
+  ll_mem_wbarb.io.in(1) <> ifpu_resp  
+  ll_mem_wbarb.io.in(1).bits.noBroadcast := false.B
+  ll_mem_wbarb.io.in(1).bits.noData := false.B
+  ll_mem_wbarb.io.in(1).bits.splitDataAndBroadcast := false.B
+  ll_mem_wbarb.io.in(1).bits.broadcastUop := ifpu_resp.bits.uop
+  }
 
 
   // Cut up critical path by delaying the write by a cycle.
   // Wakeup signal is sent on cycle S0, write is now delayed until end of S1,
   // but Issue happens on S1 and RegRead doesn't happen until S2 so we're safe.
+  if (!enableNDA) {
   fregfile.io.write_ports(0) := RegNext(WritePort(ll_wbarb.io.out, fpregSz, fLen+1, RT_FLT))
+  } else {
+  fregfile.io.write_ports(0) := RegNext(WritePort(ll_mem_wbarb.io.out, fpregSz, fLen+1, RT_FLT))
+  }
 
+  if (!enableNDA) {
   assert (ll_wbarb.io.in(0).ready) // never backpressure the memory unit.
+  } else {
+  assert (ll_mem_wbarb.io.in(0).ready) // never backpressure the memory unit.
+  }
   when (ifpu_resp.valid) { assert (ifpu_resp.bits.uop.rf_wen && ifpu_resp.bits.uop.dst_rtype === RT_FLT) }
 
   var w_cnt = 1
   for (i <- 1 until memWidth) {
+    if (!enableNDA) {
     fregfile.io.write_ports(w_cnt) := RegNext(WritePort(io.ll_wports(i), fpregSz, fLen+1, RT_FLT))
     fregfile.io.write_ports(w_cnt).bits.data := RegNext(recode(io.ll_wports(i).bits.data,
                                                                io.ll_wports(i).bits.uop.mem_size =/= 2.U))
+    } else {
+    fregfile.io.write_ports(w_cnt) := RegNext(WritePort(io.ll_mem_wports(i), fpregSz, fLen+1, RT_FLT))
+    fregfile.io.write_ports(w_cnt).bits.data := RegNext(recode(io.ll_mem_wports(i).bits.data,
+                                                               io.ll_mem_wports(i).bits.uop.mem_size =/= 2.U))
+    }
     w_cnt += 1
   }
   for (eu <- exe_units) {
@@ -258,12 +287,21 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   require (w_cnt == fregfile.io.write_ports.length)
 
   val fpiu_unit = exe_units.fpiu_unit
+  if (!enableNDA) {
   val fpiu_is_sdq = fpiu_unit.io.ll_iresp.bits.uop.uopc === uopSTA
   io.to_int.valid := fpiu_unit.io.ll_iresp.fire && !fpiu_is_sdq
   io.to_sdq.valid := fpiu_unit.io.ll_iresp.fire &&  fpiu_is_sdq
   io.to_int.bits  := fpiu_unit.io.ll_iresp.bits
   io.to_sdq.bits  := fpiu_unit.io.ll_iresp.bits
   fpiu_unit.io.ll_iresp.ready := io.to_sdq.ready && io.to_int.ready
+  } else {
+  val fpiu_is_sdq = fpiu_unit.io.ll_mem_iresp.bits.uop.uopc === uopSTA
+  io.to_int.valid := fpiu_unit.io.ll_mem_iresp.fire && !fpiu_is_sdq
+  io.to_sdq.valid := fpiu_unit.io.ll_mem_iresp.fire &&  fpiu_is_sdq
+  io.to_int.bits  := fpiu_unit.io.ll_mem_iresp.bits
+  io.to_sdq.bits  := fpiu_unit.io.ll_mem_iresp.bits
+  fpiu_unit.io.ll_mem_iresp.ready := io.to_sdq.ready && io.to_int.ready
+  }
 
   //-------------------------------------------------------------
   //-------------------------------------------------------------
@@ -271,15 +309,27 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   //-------------------------------------------------------------
   //-------------------------------------------------------------
 
+  if (!enableNDA) {
   io.wakeups(0).valid := ll_wbarb.io.out.valid
   io.wakeups(0).bits := ll_wbarb.io.out.bits
   ll_wbarb.io.out.ready := true.B
+  } else {
+  io.wakeups(0).valid := ll_mem_wbarb.io.out.valid
+  io.wakeups(0).bits := ll_mem_wbarb.io.out.bits
+  ll_mem_wbarb.io.out.ready := true.B  
+  }
 
   w_cnt = 1
   for (i <- 1 until memWidth) {
+    if (!enableNDA) {
     io.wakeups(w_cnt) := io.ll_wports(i)
     io.wakeups(w_cnt).bits.data := recode(io.ll_wports(i).bits.data,
       io.ll_wports(i).bits.uop.mem_size =/= 2.U)
+    } else {
+    io.wakeups(w_cnt) := io.ll_mem_wports(i)
+    io.wakeups(w_cnt).bits.data := recode(io.ll_mem_wports(i).bits.data,
+      io.ll_mem_wports(i).bits.uop.mem_size =/= 2.U)
+    }
     w_cnt += 1
   }
   for (eu <- exe_units) {

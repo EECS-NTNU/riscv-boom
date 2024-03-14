@@ -109,7 +109,11 @@ class ExecutionUnits(val fpu: Boolean)(implicit val p: Parameters) extends HasBo
         hasAlu = false,
         hasMem = true))
 
+      if (!enableNDA) {
       memExeUnit.io.ll_iresp.ready := DontCare
+      } else {
+      memExeUnit.io.ll_mem_iresp.ready := DontCare
+      }
 
       exe_units += memExeUnit
     }

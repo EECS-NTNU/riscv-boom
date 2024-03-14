@@ -1339,6 +1339,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     return e.uop.br_mask === 0.U && e.st_addr_mask === 0.U
   }
 
+  if (enableRegisterTaintTracking || enableRenameTaintTracking) {
   for (w <- 0 until numTaintWakeupPorts) {
     io.core.taint_wakeup_port(w).valid := false.B
     io.core.taint_wakeup_port(w).bits := 0.U
@@ -1354,14 +1355,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   }
 
   ldq_yrot_idx := WrapAdd(ldq_yrot_idx, PopCount(io.core.taint_wakeup_port map (p => p.valid)), numLdqEntries)
-  io.core.ldq_btc_head := ldq_yrot_idx
+
+  }
 
   val canBroadcastHead = Wire(Vec(memWidth, Bool()))
   val canIncrementHead = Wire(Vec(memWidth, Bool()))
+  val ldqIdxHead = Wire(Vec(memWidth, UInt(ldqAddrSz.W)))
 
   for (w <- 0 until memWidth) {
     canBroadcastHead(w) := false.B
     canIncrementHead(w) := false.B
+    ldqIdxHead(w) := WrapAdd(ldq_yrot_idx, w.U, numLdqEntries)
   }
 
   if (enableNDA) {
@@ -1377,9 +1381,11 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       }
     }
   }
-    
-  }
 
+  ldq_yrot_idx := WrapAdd(ldq_yrot_idx, PopCount((canBroadcastHead zip canIncrementHead) map {case (b, i) => b && i}), numLdqEntries)
+  } 
+
+  io.core.ldq_btc_head := ldq_yrot_idx
 
 
 
@@ -1392,11 +1398,35 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   // Handle Memory Responses and nacks
   //----------------------------------
   for (w <- 0 until memWidth) {
+    if (!enableNDA) {
     io.core.exe(w).iresp.valid := false.B
     io.core.exe(w).fresp.valid := false.B
+    } else {
+    io.core.exe(w).mem_iresp.valid := false.B
+    io.core.exe(w).mem_iresp.bits.noData := false.B
+    io.core.exe(w).mem_iresp.bits.noBroadcast := false.B
+    io.core.exe(w).mem_iresp.bits.splitDataAndBroadcast := false.B
+    io.core.exe(w).mem_iresp.bits.broadcastUop := NullMicroOp
+
+    io.core.exe(w).mem_fresp.valid := false.B
+    io.core.exe(w).mem_fresp.bits.noData := false.B
+    io.core.exe(w).mem_fresp.bits.noBroadcast := false.B
+    io.core.exe(w).mem_fresp.bits.splitDataAndBroadcast := false.B
+    io.core.exe(w).mem_fresp.bits.broadcastUop := NullMicroOp
+    }
   }
 
   val dmem_resp_fired = WireInit(widthMap(w => false.B))
+
+  val dmemData = Wire(Vec(memWidth, UInt((xLen+1).W)))
+  val dataUop = Wire(Vec(memWidth, new MicroOp()))
+  val dataLive = Wire(Vec(memWidth, Bool()))
+
+  for (w <- 0 until memWidth) {
+    dmemData(w) := 0.U
+    dataUop(w) := NullMicroOp()
+    dataLive(w) := false.B
+  }
 
   for (w <- 0 until memWidth) {
     // Handle nacks
@@ -1431,32 +1461,28 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         val send_iresp = ldq(ldq_idx).bits.uop.dst_rtype === RT_FIX
         val send_fresp = ldq(ldq_idx).bits.uop.dst_rtype === RT_FLT
 
+        if (!enableNDA) {
         io.core.exe(w).iresp.bits.uop  := ldq(ldq_idx).bits.uop
         io.core.exe(w).fresp.bits.uop  := ldq(ldq_idx).bits.uop
         io.core.exe(w).iresp.valid     := send_iresp
         io.core.exe(w).iresp.bits.data := io.dmem.resp(w).bits.data
         io.core.exe(w).fresp.valid     := send_fresp
         io.core.exe(w).fresp.bits.data := io.dmem.resp(w).bits.data
-
-        if (enableNDA) {
-        io.core.exe(w).mem_iresp.bits.uop  := ldq(ldq_idx).bits.uop
-        io.core.exe(w).mem_fresp.bits.uop  := ldq(ldq_idx).bits.uop
-        io.core.exe(w).mem_iresp.valid     := send_iresp
-        io.core.exe(w).mem_iresp.bits.data := io.dmem.resp(w).bits.data
-        io.core.exe(w).mem_fresp.valid     := send_fresp
-        io.core.exe(w).mem_fresp.bits.data := io.dmem.resp(w).bits.data
-
-        io.core.exe(w).mem_iresp.bits.noBroadcast := !isNonSpeculative(ldq(ldq_idx).bits) && !canBroadcastHead(w)
-        io.core.exe(w).mem_fresp.bits.noBroadcast := !isNonSpeculative(ldq(ldq_idx).bits) && !canBroadcastHead(w)
-
-        ldq(ldq_idx).bits.needs_to_rebroadcast := !isNonSpeculative(ldq(ldq_idx).bits)
-
+        } else {
+        dmemData(w) := io.dmem.resp(w).bits.data
+        dataLive(w) := true.B
+        dataUop(w) := io.dmem.resp(w).bits.uop
+        ldq(ldq_idx).bits.needs_to_rebroadcast := true.B//!isNonSpeculative(ldq(ldq_idx).bits)
         }
 
         assert(send_iresp ^ send_fresp)
         dmem_resp_fired(w) := true.B
 
+        if (!enableNDA) {
         ldq(ldq_idx).bits.succeeded      := io.core.exe(w).iresp.valid || io.core.exe(w).fresp.valid
+        } else {
+        ldq(ldq_idx).bits.succeeded      := send_iresp || send_fresp
+        }
         ldq(ldq_idx).bits.debug_wb_data  := io.dmem.resp(w).bits.data
       }
         .elsewhen (io.dmem.resp(w).bits.uop.uses_stq)
@@ -1465,9 +1491,16 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         stq(io.dmem.resp(w).bits.uop.stq_idx).bits.succeeded := true.B
         when (io.dmem.resp(w).bits.uop.is_amo) {
           dmem_resp_fired(w) := true.B
+          if (!enableNDA) {
           io.core.exe(w).iresp.valid     := true.B
           io.core.exe(w).iresp.bits.uop  := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.uop
           io.core.exe(w).iresp.bits.data := io.dmem.resp(w).bits.data
+          } else {
+          //STQ IS ONLY IRESP
+          dataLive(w) := true.B
+          dmemData(w) := io.dmem.resp(w).bits.data
+          dataUop(w) := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.uop
+          }
 
           stq(io.dmem.resp(w).bits.uop.stq_idx).bits.debug_wb_data := io.dmem.resp(w).bits.data
         }
@@ -1494,12 +1527,18 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
                                 wb_forward_ld_addr(w),
                                 storegen.data, false.B, coreDataBytes)
 
+      if (!enableNDA) {
       io.core.exe(w).iresp.valid := (forward_uop.dst_rtype === RT_FIX) && data_ready && live
       io.core.exe(w).fresp.valid := (forward_uop.dst_rtype === RT_FLT) && data_ready && live
       io.core.exe(w).iresp.bits.uop  := forward_uop
       io.core.exe(w).fresp.bits.uop  := forward_uop
       io.core.exe(w).iresp.bits.data := loadgen.data
       io.core.exe(w).fresp.bits.data := loadgen.data
+      } else {
+      dmemData(w) := loadgen.data
+      dataUop(w) := forward_uop   
+      dataLive(w) := data_ready && live
+      }
 
       when (data_ready && live) {
         ldq(f_idx).bits.succeeded := data_ready
@@ -1511,8 +1550,33 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     }
   }
 
+  if (enableNDA) {
+  
+
+  for (w <- 0 until memWidth) {
+    io.core.exe(w).mem_iresp.valid         := (canBroadcastHead(w) && ldq(ldqIdxHead(w)).bits.uop.dst_rtype === RT_FIX) ||
+                                              (dataLive(w) && dataUop(w).dst_rtype === RT_FIX)
+    io.core.exe(w).mem_iresp.bits.uop           := dataUop(w)
+    io.core.exe(w).mem_iresp.bits.broadcastUop  := ldq(ldqIdxHead(w)).bits.uop
+    io.core.exe(w).mem_iresp.bits.noData        := !dataLive(w) || dataUop(w).dst_rtype =/= RT_FIX
+    io.core.exe(w).mem_iresp.bits.noBroadcast   := !canBroadcastHead(w) || ldq(ldqIdxHead(w)).bits.uop.dst_rtype =/= RT_FIX
+    io.core.exe(w).mem_iresp.bits.splitDataAndBroadcast := true.B
+    
+
+    io.core.exe(w).mem_fresp.valid         := (canBroadcastHead(w) && ldq(ldqIdxHead(w)).bits.uop.dst_rtype === RT_FLT) ||
+                                              (dataLive(w) && dataUop(w).dst_rtype === RT_FLT)
+    io.core.exe(w).mem_fresp.bits.uop           := dataUop(w)
+    io.core.exe(w).mem_fresp.bits.broadcastUop  := ldq(ldqIdxHead(w)).bits.uop
+    io.core.exe(w).mem_fresp.bits.noData        := !dataLive(w) || dataUop(w).dst_rtype =/= RT_FLT
+    io.core.exe(w).mem_fresp.bits.noBroadcast   := !canBroadcastHead(w) || ldq(ldqIdxHead(w)).bits.uop.dst_rtype =/= RT_FLT
+    io.core.exe(w).mem_fresp.bits.splitDataAndBroadcast := true.B 
+
+  }
+  }
+
   // Initially assume the speculative load wakeup failed
   io.core.ld_miss         := RegNext(io.core.spec_ld_wakeup.map(_.valid).reduce(_||_))
+  if (!enableNDA) {
   val spec_ld_succeed = widthMap(w =>
     !RegNext(io.core.spec_ld_wakeup(w).valid) ||
     (io.core.exe(w).iresp.valid &&
@@ -1521,6 +1585,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   ).reduce(_&&_)
   when (spec_ld_succeed) {
     io.core.ld_miss := false.B
+  }
+  } else {
+  val spec_ld_succeed = widthMap(w =>
+    !RegNext(io.core.spec_ld_wakeup(w).valid) ||
+    (io.core.exe(w).mem_iresp.valid &&
+      io.core.exe(w).mem_iresp.bits.uop.ldq_idx === RegNext(mem_incoming_uop(w).ldq_idx)
+    )
+  ).reduce(_&&_)
+  when (spec_ld_succeed) {
+    io.core.ld_miss := false.B
+  }
   }
 
 

@@ -50,7 +50,7 @@ class MemExeUnitResp(override val dataWidth: Int)(implicit p: Parameters) extend
   val noBroadcast = Bool()
   val noData = Bool()
   val splitDataAndBroadcast = Bool()
-  val broadcastPdst = UInt(maxPregSz.W)
+  val broadcastUop = new MicroOp()
 }
 
 /**
@@ -159,18 +159,25 @@ abstract class ExecutionUnit(
     io.iresp.bits.predicated := false.B
     assert(io.iresp.ready)
   }
-  if (writesLlIrf) {
+  if (writesLlIrf && !enableNDA) {
     io.ll_iresp.bits.fflags.valid := false.B
     io.ll_iresp.bits.predicated := false.B
+  } else if (writesLlIrf) {
+    io.ll_mem_iresp.bits.fflags.valid := false.B
+    io.ll_mem_iresp.bits.predicated := false.B
   }
   if (writesFrf)   {
     io.fresp.bits.fflags.valid := false.B
     io.fresp.bits.predicated := false.B
     assert(io.fresp.ready)
   }
-  if (writesLlFrf) {
+  if (writesLlFrf && !enableNDA) {
     io.ll_fresp.bits.fflags.valid := false.B
     io.ll_fresp.bits.predicated := false.B
+  } else if (writesLlFrf) {
+    io.ll_mem_fresp.bits.fflags.valid := false.B
+    io.ll_mem_fresp.bits.predicated := false.B
+
   }
 
   // TODO add "number of fflag ports", so we can properly account for FPU+Mem combinations
@@ -361,7 +368,11 @@ class ALUExeUnit(
     queue.io.brupdate := io.brupdate
     queue.io.flush := io.req.bits.kill
 
+    if (!enableNDA) {
     io.ll_fresp <> queue.io.deq
+    } else {
+    io.ll_mem_fresp <> queue.io.deq
+    }
     ifpu_busy := !(queue.io.empty)
     assert (queue.io.enq.ready)
   }
@@ -578,7 +589,11 @@ class FPUExeUnit(
     val resp_arb = Module(new Arbiter(new ExeUnitResp(dataWidth), 2))
     resp_arb.io.in(0) <> queue.io.deq
     resp_arb.io.in(1) <> fp_sdq.io.deq
+    if (!enableNDA) {
     io.ll_iresp       <> resp_arb.io.out
+    } else {
+    io.ll_mem_iresp <> resp_arb.io.out
+    }
 
     fpiu_busy := !(queue.io.empty && fp_sdq.io.empty)
   }
