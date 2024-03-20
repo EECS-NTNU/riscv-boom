@@ -314,8 +314,13 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   io.wakeups(0).bits := ll_wbarb.io.out.bits
   ll_wbarb.io.out.ready := true.B
   } else {
-  io.wakeups(0).valid := ll_mem_wbarb.io.out.valid
-  io.wakeups(0).bits := ll_mem_wbarb.io.out.bits
+  io.wakeups(0).valid := ll_mem_wbarb.io.out.valid &&
+                         ll_mem_wbarb.io.out.bits.broadcastUop.dst_rtype === RT_FLT &&
+                         !ll_mem_wbarb.io.out.bits.noBroadcast
+  io.wakeups(0).bits.uop := ll_mem_wbarb.io.out.bits.broadcastUop
+  io.wakeups(0).bits.predicated := ll_mem_wbarb.io.out.bits.predicated
+  io.wakeups(0).bits.fflags := ll_mem_wbarb.io.out.bits.fflags
+  io.wakeups(0).bits.data := ll_mem_wbarb.io.out.bits.data
   ll_mem_wbarb.io.out.ready := true.B  
   }
 
@@ -326,7 +331,12 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     io.wakeups(w_cnt).bits.data := recode(io.ll_wports(i).bits.data,
       io.ll_wports(i).bits.uop.mem_size =/= 2.U)
     } else {
-    io.wakeups(w_cnt) := io.ll_mem_wports(i)
+    io.wakeups(w_cnt).valid := io.ll_mem_wports(i).valid &&
+                               io.ll_mem_wports(i).bits.broadcastUop.dst_rtype === RT_FLT &&
+                               !io.ll_mem_wports(i).bits.noBroadcast
+    io.wakeups(w_cnt).bits.uop := io.ll_mem_wports(i).bits.broadcastUop
+    io.wakeups(w_cnt).bits.predicated := io.ll_mem_wports(i).bits.predicated
+    io.wakeups(w_cnt).bits.fflags := io.ll_mem_wports(i).bits.fflags
     io.wakeups(w_cnt).bits.data := recode(io.ll_mem_wports(i).bits.data,
       io.ll_mem_wports(i).bits.uop.mem_size =/= 2.U)
     }

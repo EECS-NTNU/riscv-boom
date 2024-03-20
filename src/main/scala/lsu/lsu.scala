@@ -357,6 +357,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       ldq(ld_enq_idx).bits.order_fail      := false.B
       ldq(ld_enq_idx).bits.observed        := false.B
       ldq(ld_enq_idx).bits.forward_std_val := false.B
+      ldq(ld_enq_idx).bits.needs_to_rebroadcast := false.B
 
       assert (ld_enq_idx === io.core.dis_uops(w).bits.ldq_idx, "[lsu] mismatch enq load tag.")
       assert (!ldq(ld_enq_idx).valid, "[lsu] Enqueuing uop is overwriting ldq entries")
@@ -1374,7 +1375,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     val ldq_e = ldq(WrapAdd(ldq_yrot_idx, w.U, numLdqEntries))
     val valid = canIncrementHead.slice(0, w).foldLeft(true.B){case (v, w) => v && w}
 
-    when (valid && ldq_e.valid && isNonSpeculative(ldq_e.bits)) {
+    when (valid && ldq_e.valid && isNonSpeculative(ldq_e.bits) && ldq_e.bits.succeeded) {
       canIncrementHead(w) := true.B
       when(ldq_e.bits.needs_to_rebroadcast) {
         canBroadcastHead(w) := true.B
@@ -1546,6 +1547,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         ldq(f_idx).bits.forward_stq_idx := wb_forward_stq_idx(w)
 
         ldq(f_idx).bits.debug_wb_data   := loadgen.data
+        if(enableNDA) {
+          ldq(f_idx).bits.needs_to_rebroadcast := true.B
+        }
       }
     }
   }
@@ -1556,6 +1560,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   for (w <- 0 until memWidth) {
     io.core.exe(w).mem_iresp.valid         := (canBroadcastHead(w) && ldq(ldqIdxHead(w)).bits.uop.dst_rtype === RT_FIX) ||
                                               (dataLive(w) && dataUop(w).dst_rtype === RT_FIX)
+    io.core.exe(w).mem_iresp.bits.data          := dmemData(w)
     io.core.exe(w).mem_iresp.bits.uop           := dataUop(w)
     io.core.exe(w).mem_iresp.bits.broadcastUop  := ldq(ldqIdxHead(w)).bits.uop
     io.core.exe(w).mem_iresp.bits.noData        := !dataLive(w) || dataUop(w).dst_rtype =/= RT_FIX
@@ -1565,6 +1570,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     io.core.exe(w).mem_fresp.valid         := (canBroadcastHead(w) && ldq(ldqIdxHead(w)).bits.uop.dst_rtype === RT_FLT) ||
                                               (dataLive(w) && dataUop(w).dst_rtype === RT_FLT)
+    io.core.exe(w).mem_fresp.bits.data          := dmemData(w)
     io.core.exe(w).mem_fresp.bits.uop           := dataUop(w)
     io.core.exe(w).mem_fresp.bits.broadcastUop  := ldq(ldqIdxHead(w)).bits.uop
     io.core.exe(w).mem_fresp.bits.noData        := !dataLive(w) || dataUop(w).dst_rtype =/= RT_FLT

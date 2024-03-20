@@ -1029,14 +1029,14 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   for (i <- 1 until memWidth) {
     if (enableNDA) {
       
-    int_iss_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.uop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
+    int_iss_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.broadcastUop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
     int_iss_wakeups(i).bits.data := mem_nda_resps(i).bits.data
     int_iss_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
     int_iss_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
     int_iss_wakeups(i).bits.uop := mem_nda_resps(i).bits.broadcastUop
 
 
-    int_ren_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.uop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
+    int_ren_wakeups(i).valid := mem_nda_resps(i).valid && mem_nda_resps(i).bits.broadcastUop.dst_rtype === RT_FIX && !mem_nda_resps(i).bits.noBroadcast
     int_ren_wakeups(i).bits.data := mem_nda_resps(i).bits.data
     int_ren_wakeups(i).bits.predicated := mem_nda_resps(i).bits.predicated
     int_ren_wakeups(i).bits.fflags := mem_nda_resps(i).bits.fflags
