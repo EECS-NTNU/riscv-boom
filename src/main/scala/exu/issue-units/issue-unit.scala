@@ -76,11 +76,8 @@ class IssueUnitIO(
   val iss_uops         = Output(Vec(issueWidth, new MicroOp()))
   val wakeup_ports     = Flipped(Vec(numWakeupPorts, Valid(new IqWakeup(maxPregSz))))
   // STT
-  val req_valids       = Output(Vec(issueWidth, Bool()))
-  val req_uops         = Output(Vec(issueWidth, new MicroOp()))
-
-  val yrot         = if (enableRegisterTaintTracking) Input(Vec(issueWidth, UInt(ldqAddrSz.W))) else null
-  val yrot_r       = if (enableRegisterTaintTracking) Input(Vec(issueWidth, Bool())) else null
+  val req_uops         = if (enableRegisterTaintTracking) Output(Vec(issueWidth, Valid(new MicroOp()))) else null
+  val yrot_resp        = if (enableRegisterTaintTracking) Input(Vec(issueWidth, Valid(new RegYrotResp))) else null
 
   val taint_wakeup_port= Flipped(Vec(numTaintWakeupPorts, Valid(UInt(ldqAddrSz.W))))
   val ldq_head         = Input(UInt(ldqAddrSz.W))

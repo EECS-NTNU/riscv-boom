@@ -781,19 +781,17 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       var exe_unit = exe_units(w)
       if (exe_unit.readsIrf) {
         if (exe_unit.hasMem) {
-          reg_taint_tracker.io.req_valids(iss_idx) := mem_iss_unit.io.req_valids(mem_iss_cnt)
           reg_taint_tracker.io.req_uops(iss_idx) := mem_iss_unit.io.req_uops(mem_iss_cnt)
-          mem_iss_unit.io.yrot(mem_iss_cnt) := reg_taint_tracker.io.req_yrot(iss_idx)
-          mem_iss_unit.io.yrot_r(mem_iss_cnt) := reg_taint_tracker.io.req_yrot_r(iss_idx)
-          ordered_yrot_r(iss_idx) := reg_taint_tracker.io.req_yrot_r(iss_idx) || (!mem_iss_unit.io.req_valids(mem_iss_cnt))
+          mem_iss_unit.io.yrot_resp(mem_iss_cnt) := reg_taint_tracker.io.yrot_resp(iss_idx)
+          
+          ordered_yrot_r(iss_idx) := reg_taint_tracker.io.yrot_resp(iss_idx).bits.yrot_r || (!mem_iss_unit.io.req_uops(mem_iss_cnt).valid)
           
           mem_iss_cnt += 1
         } else {
-          reg_taint_tracker.io.req_valids(iss_idx) := int_iss_unit.io.req_valids(int_iss_cnt)
           reg_taint_tracker.io.req_uops(iss_idx) := int_iss_unit.io.req_uops(int_iss_cnt)
-          int_iss_unit.io.yrot(int_iss_cnt) := reg_taint_tracker.io.req_yrot(iss_idx)
-          int_iss_unit.io.yrot_r(int_iss_cnt) := reg_taint_tracker.io.req_yrot_r(iss_idx)
-          ordered_yrot_r(iss_idx) := reg_taint_tracker.io.req_yrot_r(iss_idx) || (!int_iss_unit.io.req_valids(int_iss_cnt))
+          int_iss_unit.io.yrot_resp(int_iss_cnt) := reg_taint_tracker.io.yrot_resp(iss_idx)
+          
+          ordered_yrot_r(iss_idx) := reg_taint_tracker.io.yrot_resp(iss_idx).bits.yrot_r || (!int_iss_unit.io.req_uops(int_iss_cnt).valid)
           
           int_iss_cnt += 1
         }
@@ -802,11 +800,9 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
 
     for (w <- 0 until issueParams.find(_.iqType == IQT_FP.litValue).get.issueWidth) {
-      reg_taint_tracker.io.req_valids(iss_idx) := fp_pipeline.io.req_valids(w)
       reg_taint_tracker.io.req_uops(iss_idx) := fp_pipeline.io.req_uops(w)
-      fp_pipeline.io.req_yrot(w) := reg_taint_tracker.io.req_yrot(iss_idx)
-      fp_pipeline.io.req_yrot_r(w) := reg_taint_tracker.io.req_yrot_r(iss_idx)
-      ordered_yrot_r(iss_idx) := reg_taint_tracker.io.req_yrot_r(iss_idx) || (!fp_pipeline.io.req_valids(w))
+      fp_pipeline.io.yrot_resp(w) := reg_taint_tracker.io.yrot_resp(iss_idx)
+      ordered_yrot_r(iss_idx) := reg_taint_tracker.io.yrot_resp(iss_idx).bits.yrot_r || (!fp_pipeline.io.req_uops(w).valid)
       iss_idx += 1
     }
   }
@@ -851,8 +847,6 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     if (enableRenameTaintTracking) {
       dis_uops(w).yrot := ren_taint_tracker.io.ren2_yrot(w)
       dis_uops(w).yrot_r := ren_taint_tracker.io.ren2_yrot_r(w) || !dis_uops(w).transmitter //taint tracker should account for same-cycle wakeups||
-                            //io.lsu.taint_wakeup_port.foldLeft(false.B)
-                            //{case (y, port) => y || (port.valid && port.bits === taint_tracker.io.ren2_yrot(w))}
     } else {
       dis_uops(w).yrot_r := true.B 
     }

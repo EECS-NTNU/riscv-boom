@@ -14,6 +14,11 @@ import boom.ifu.{GlobalHistory}
 import boom.exu.FUConstants._
 import boom.util._
 
+class RegYrotResp(implicit p: Parameters) extends BoomBundle {
+    val yrot = UInt(ldqAddrSz.W)
+    val yrot_r = Bool()
+}
+
 class RegisterTaintTracker(
   val combinedIssueWidth: Int,
   val numPhysRegs: Int,
@@ -25,12 +30,10 @@ class RegisterTaintTracker(
         val taint_wakeup_port = Flipped(Vec(numTaintWakeupPorts, Valid(UInt(ldqAddrSz.W))))
 
         val ldq_flipped    = Input(Bool())
+        
+        val req_uops       = Input(Vec(combinedIssueWidth, Valid(new MicroOp())))
 
-        val req_valids     = Input(Vec(combinedIssueWidth, Bool()))
-        val req_uops       = Input(Vec(combinedIssueWidth, new MicroOp()))
-
-        val req_yrot       = Output(Vec(combinedIssueWidth, (UInt(ldqAddrSz.W))))
-        val req_yrot_r     = Output(Vec(combinedIssueWidth, Bool()))
+        val yrot_resp       = Output(Vec(combinedIssueWidth, Valid(new RegYrotResp())))
 
         val ldq_btc_head   = Input(UInt(ldqAddrSz.W))
         val ldq_tail       = Input(UInt(ldqAddrSz.W))  
@@ -135,17 +138,6 @@ class RegisterTaintTracker(
         isBetween
     }
 
-    //Stat Information
-    //val taints_calc_total = RegInit(0.U(40.W))
-    //val yrot_r_on_req = RegInit(0.U(40.W))
-
-    //taints_calc_total := taints_calc_total + PopCount(io.req_valids)
-    //yrot_r_on_req := yrot_r_on_req + PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
-    io.taints_calc := PopCount(io.req_valids)
-    io.yrot_r_on_req := PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && y})
-    (io.req_valids zip io.req_yrot_r) map { case (r, y) => r && !y} zip (io.req_uops map (u => u.uses_ldq)) map { case (t, l) => t && l}
-    io.tainted_loads := PopCount((io.req_valids zip io.req_yrot_r) map { case (r, y) => r && !y} zip (io.req_uops map (u => u.uses_ldq)) map { case (t, l) => t && l})
-
     // Taint files for int and fp registers
     val int_taint_file              = Reg(Vec(numIntPhysRegs, new TaintEntry()))
     val fp_taint_file               = Reg(Vec(numFpPhysRegs, new TaintEntry()))
@@ -153,8 +145,8 @@ class RegisterTaintTracker(
     val req_uops                    = Wire(Vec(combinedIssueWidth, new MicroOp()))
     val req_valids                  = Wire(Vec(combinedIssueWidth, Bool()))
 
-    req_uops := io.req_uops
-    req_valids := io.req_valids
+    req_uops := io.req_uops map (r => r.bits)
+    req_valids := io.req_uops map (r => r.valid)
 
     val int_taint_file_freed_taints = Wire(Vec(numIntPhysRegs, new TaintEntry()))
     val fp_taint_file_freed_taints = Wire(Vec(numFpPhysRegs, new TaintEntry()))
@@ -195,9 +187,10 @@ class RegisterTaintTracker(
         }
 
         new_taint_entries(i) := new_tent
-
-        io.req_yrot(i) := t_ent.ldq_idx
-        io.req_yrot_r(i) := !t_ent.valid || (!io.req_uops(i).transmitter)
+        
+        io.yrot_resp(i).valid := req_valids(i)
+        io.yrot_resp(i).bits.yrot := new_tent.ldq_idx
+        io.yrot_resp(i).bits.yrot_r := !t_ent.valid || (!req_uops(i).transmitter)
     }
 
     for (i <- 0 until numIntPhysRegs) {
@@ -218,5 +211,10 @@ class RegisterTaintTracker(
 
     dontTouch(int_taint_file)
     dontTouch(fp_taint_file)
+    
+    //Stat calcs
+    io.taints_calc := PopCount(req_valids)
+    io.yrot_r_on_req := PopCount((req_valids zip io.yrot_resp) map { case (r, y) => r && y.bits.yrot_r})
+    io.tainted_loads := PopCount((req_valids zip io.yrot_resp) map { case (r, y) => r && !y.bits.yrot_r} zip (io.req_uops map (u => u.bits.uses_ldq)) map { case (t, l) => t && l})
 
 }

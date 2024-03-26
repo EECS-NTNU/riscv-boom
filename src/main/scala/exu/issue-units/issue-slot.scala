@@ -45,9 +45,9 @@ class IssueSlotIO(val numWakeupPorts: Int)(implicit p: Parameters) extends BoomB
   val wakeup_ports  = Flipped(Vec(numWakeupPorts, Valid(new IqWakeup(maxPregSz))))
   val pred_wakeup_port = Flipped(Valid(UInt(log2Ceil(ftqSz).W)))
   val spec_ld_wakeup = Flipped(Vec(memWidth, Valid(UInt(width=maxPregSz.W))))
+  //Taint Tracking
   val taint_wakeup_port = Flipped(Vec(numTaintWakeupPorts, Valid(UInt(ldqAddrSz.W))))
-  val yrot = Input(Valid(UInt(ldqAddrSz.W)))
-  val yrot_r = Input(Bool())
+  val yrot_resp = if (enableRegisterTaintTracking) Input(Valid(new RegYrotResp())) else null
 
   val blocked_taint = Output(Bool())
 
@@ -99,8 +99,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   val p2    = RegInit(false.B)
   val p3    = RegInit(false.B)
   val ppred = RegInit(false.B)
-  // Is yrot broadcast as ready
-  val yrot_r= RegInit(false.B)
+  val yrot_r = RegInit(false.B)
 
   // Poison if woken up by speculative load.
   // Poison lasts 1 cycle (as ldMiss will come on the next cycle).
@@ -148,7 +147,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     // try to issue this uop.
     if (enableRegisterTaintTracking) {
       when ((!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) &&
-            (io.yrot_r || slot_uop.taint_set)) {
+            (io.yrot_resp.bits.yrot_r || slot_uop.taint_set)) {
         next_state := s_invalid
         } 
       } else {
@@ -160,7 +159,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     val is_valid_s2_grant = WireInit(false.B)
     if (enableRegisterTaintTracking) {
       is_valid_s2_grant := !(io.ldspec_miss && (p1_poisoned || p2_poisoned)) &&
-                            (io.yrot_r || slot_uop.taint_set)
+                            (io.yrot_resp.bits.yrot_r || slot_uop.taint_set)
     } else {
       is_valid_s2_grant := !(io.ldspec_miss && (p1_poisoned || p2_poisoned))
     }
@@ -182,10 +181,9 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     slot_uop := io.in_uop.bits
     assert (is_invalid || io.clear || io.kill, "trying to overwrite a valid issue slot.")
   }.otherwise{
-    slot_uop.taint_set  := Mux(io.yrot.valid, true.B, slot_uop.taint_set)
-    slot_uop.yrot       := Mux(io.yrot.valid, io.yrot.bits, slot_uop.yrot)
-    slot_uop.yrot_r     := Mux(io.yrot.valid, io.yrot_r, yrot_r)
-    yrot_r := Mux(io.yrot.valid, io.yrot_r, yrot_r)
+    slot_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
+    slot_uop.yrot       := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot, slot_uop.yrot)
+    slot_uop.yrot_r     := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot_r, slot_uop.yrot_r)
   }
   // Wakeup Compare Logic
 
@@ -195,9 +193,6 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   val next_p2 = WireInit(p2)
   val next_p3 = WireInit(p3)
   val next_ppred = WireInit(ppred)
-  // STT
-  val next_yrot_r = WireInit(yrot_r)
-  // End STT
 
   when (io.in_uop.valid) {
     p1 := !(io.in_uop.bits.prs1_busy)
@@ -248,8 +243,6 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
 
         isBetween
     }
-
-  //assert(is_invalid || yrot_r || (idxBetween(slot_uop.yrot, io.ldq_head, io.ldq_tail)))
   // End STT
   
   when (io.pred_wakeup_port.valid && io.pred_wakeup_port.bits === next_uop.ppred) {
@@ -294,8 +287,8 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   }
 
   //-------------------------------------------------------------
-  // Request Logic - yrot_r is STT - yrot always high
-  // if STT is disabled
+  // Request Logic - yrot_r is STT
+  // yrot_r always high if STT is disabled
   io.request := is_valid && p1 && p2 && p3 && ppred && yrot_r && !io.kill
   io.blocked_taint := is_valid && p1 && p2 && p3 && ppred && !io.kill && !yrot_r
   val high_priority = slot_uop.is_br || slot_uop.is_jal || slot_uop.is_jalr
@@ -324,7 +317,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   // micro-op will vacate due to grant.
   val may_vacate = io.grant && ((state === s_valid_1) || (state === s_valid_2) && p1 && p2 && ppred)
   val squash_grant = io.ldspec_miss && (p1_poisoned || p2_poisoned) 
-  val taint_squash_grant = !slot_uop.taint_set && slot_uop.transmitter && (!io.yrot_r)
+  val taint_squash_grant = !slot_uop.taint_set && slot_uop.transmitter && (!io.yrot_resp.bits.yrot_r)
   io.will_be_valid := is_valid && !(may_vacate && !squash_grant && !taint_squash_grant)
 
   io.out_uop            := slot_uop
@@ -336,9 +329,9 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   io.out_uop.prs1_busy  := !p1
   io.out_uop.prs2_busy  := !p2
   io.out_uop.prs3_busy  := !p3
-  io.out_uop.yrot       := Mux(io.yrot.valid, io.yrot.bits, slot_uop.yrot)
-  io.out_uop.yrot_r     := Mux(io.yrot.valid, io.yrot_r, yrot_r)
-  io.out_uop.taint_set  := Mux(io.yrot.valid, true.B, slot_uop.taint_set)
+  io.out_uop.yrot       := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot, slot_uop.yrot)
+  io.out_uop.yrot_r     := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot_r, yrot_r)
+  io.out_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
   io.out_uop.ppred_busy := !ppred
   io.out_uop.iw_p1_poisoned := p1_poisoned
   io.out_uop.iw_p2_poisoned := p2_poisoned

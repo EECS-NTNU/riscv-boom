@@ -68,9 +68,9 @@ class IssueUnitCollapsing(
     issue_slots(i).in_uop.valid := false.B
     issue_slots(i).in_uop.bits  := uops(i+1)
     //STT
-    issue_slots(i).yrot.valid := false.B
-    issue_slots(i).yrot.bits := 0.U
-    issue_slots(i).yrot_r := false.B
+    issue_slots(i).yrot_resp.valid := false.B
+    issue_slots(i).yrot_resp.bits.yrot := 0.U
+    issue_slots(i).yrot_resp.bits.yrot_r := false.B
     for (j <- 1 to maxShift by 1) {
       when (shamts_oh(i+j) === (1 << (j-1)).U) {
         issue_slots(i).in_uop.valid := will_be_valid(i+j)
@@ -106,8 +106,8 @@ class IssueUnitCollapsing(
     io.iss_uops(w).lrs2_rtype := RT_X
 
     // STT
-    io.req_valids(w) := false.B
-    io.req_uops(w) := NullMicroOp
+    io.req_uops(w).valid := false.B
+    io.req_uops(w).bits := NullMicroOp
   }
 
   val requests = issue_slots.map(s => s.request)
@@ -130,12 +130,11 @@ class IssueUnitCollapsing(
         io.iss_valids(w) := true.B
         io.iss_uops(w) := issue_slots(i).uop
 
-        io.req_valids(w) := !issue_slots(i).uop.taint_set
-        io.req_uops(w) := issue_slots(i).uop
         if (enableRegisterTaintTracking) {
-          issue_slots(i).yrot_r := io.yrot_r(w)
-          issue_slots(i).yrot.valid := !issue_slots(i).uop.taint_set
-          issue_slots(i).yrot.bits := io.yrot(w)
+          io.req_uops(w).valid := !issue_slots(i).uop.taint_set
+          io.req_uops(w).bits := issue_slots(i).uop
+          issue_slots(i).yrot_resp.valid := io.yrot_resp(w).valid
+          issue_slots(i).yrot_resp.bits := io.yrot_resp(w).bits
         }
         assigned_issue_debug := i.U
       }
@@ -145,11 +144,9 @@ class IssueUnitCollapsing(
     }
   }
 
-  dontTouch(io.req_valids)
-  dontTouch(io.req_uops)
   if (enableRegisterTaintTracking) {
-    dontTouch(io.yrot_r)
-    dontTouch(io.yrot)
+    dontTouch(io.req_uops)
+    dontTouch(io.yrot_resp)
   }
   dontTouch(assigned_issue_debug)
 
