@@ -68,9 +68,11 @@ class IssueUnitCollapsing(
     issue_slots(i).in_uop.valid := false.B
     issue_slots(i).in_uop.bits  := uops(i+1)
     //STT
+    if (enableRegisterTaintTracking) {
     issue_slots(i).yrot_resp.valid := false.B
     issue_slots(i).yrot_resp.bits.yrot := 0.U
     issue_slots(i).yrot_resp.bits.yrot_r := false.B
+    }
     for (j <- 1 to maxShift by 1) {
       when (shamts_oh(i+j) === (1 << (j-1)).U) {
         issue_slots(i).in_uop.valid := will_be_valid(i+j)
@@ -106,8 +108,10 @@ class IssueUnitCollapsing(
     io.iss_uops(w).lrs2_rtype := RT_X
 
     // STT
+    if (enableRegisterTaintTracking) {
     io.req_uops(w).valid := false.B
     io.req_uops(w).bits := NullMicroOp
+    }
   }
 
   val requests = issue_slots.map(s => s.request)
