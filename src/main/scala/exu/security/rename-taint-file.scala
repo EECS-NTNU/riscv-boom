@@ -300,15 +300,7 @@ class RenameTaintTracker(
             new_tent.ldq_idx := WrapAdd(io.ldq_tail, loads_last_cycle + load_ops(i), numLdqEntries) //ren1_uops(i).ldq_idx
             new_tent.flipped_age := Mux(ldq_will_flip(i), !io.ldq_flipped, io.ldq_flipped)
             new_tent.valid := true.B
-        }. elsewhen(ren1_fire(i) && (!ren1_uops(i).is_problematic)) {
-            // Is the load that is tainting us being declared non-speculative this cycle?
-            // This should be redundant with the freed-taint-file check earlier
-            for (j <- 0 until numTaintWakeupPorts) {
-                when(io.taint_wakeup_port(j).valid && (io.taint_wakeup_port(j).bits === t_ent.ldq_idx)) {
-                    t_ent.valid := false.B
-                    new_tent.valid := false.B
-                }
-            }
+        }. elsewhen(ren1_fire(i) && !ren1_uops(i).is_problematic) {
             new_taint_entries(i) := t_ent
         }. otherwise {
             new_tent.valid := false.B
