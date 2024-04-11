@@ -43,7 +43,7 @@ trait IssueUnitConstants
   // invalid  : slot holds no valid uop.
   // s_valid_1: slot holds a valid uop.
   // s_valid_2: slot holds a store-like uop that may be broken into two micro-ops.
-  val s_invalid :: s_valid_1 :: s_valid_2 :: Nil = Enum(3)
+  val s_invalid :: s_valid_1 :: s_valid_2 :: s_taint_blocked :: Nil = Enum(4)
 }
 
 /**

@@ -91,10 +91,13 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
 
   val next_state      = Wire(UInt()) // the next state of this slot (which might then get moved to a new slot)
   val next_uopc       = Wire(UInt()) // the next uopc of this slot (which might then get moved to a new slot)
+  val next_state_uopc = Wire(UInt())
   val next_lrs1_rtype = Wire(UInt()) // the next reg type of this slot (which might then get moved to a new slot)
   val next_lrs2_rtype = Wire(UInt()) // the next reg type of this slot (which might then get moved to a new slot)
 
   val state = RegInit(s_invalid)
+  val previous_state = RegInit(s_invalid)
+  val state_uopc = RegInit(0.U(UOPC_SZ.W))
   val p1    = RegInit(false.B)
   val p2    = RegInit(false.B)
   val p3    = RegInit(false.B)
@@ -121,12 +124,20 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
 
   when (io.kill) {
     state := s_invalid
+    previous_state := s_invalid
+    state_uopc := 0.U
   } .elsewhen (io.in_uop.valid) {
     state := io.in_uop.bits.iw_state
+    previous_state := io.in_uop.bits.old_iw_state
+    state_uopc := io.in_uop.bits.state_uopc
   } .elsewhen (io.clear) {
     state := s_invalid
+    previous_state := s_invalid
+    state_uopc := 0.U
   } .otherwise {
     state := next_state
+    previous_state := state
+    state_uopc := state_uopc
   }
 
   //-----------------------------------------------------------------------------
@@ -137,6 +148,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   // defaults
   next_state := state
   next_uopc := slot_uop.uopc
+  next_state_uopc := slot_uop.uopc
   next_lrs1_rtype := slot_uop.lrs1_rtype
   next_lrs2_rtype := slot_uop.lrs2_rtype
 
@@ -146,39 +158,52 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     (io.grant && (state === s_valid_2) && p1 && p2 && ppred)) {
     // try to issue this uop.
     if (enableRegisterTaintTracking) {
-      when ((!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) &&
-            (io.yrot_resp.bits.yrot_r || slot_uop.taint_set)) {
-        next_state := s_invalid
-        } 
-      } else {
-      when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
-        next_state := s_invalid
-        }
-      } 
+    when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
+      next_state := Mux(slot_uop.taint_set, s_invalid, s_taint_blocked)
+      }
+    } else {
+    when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
+      next_state := s_invalid
+      }
+    } 
   } .elsewhen (io.grant && (state === s_valid_2)) {
     val is_valid_s2_grant = WireInit(false.B)
-    if (enableRegisterTaintTracking) {
-      is_valid_s2_grant := !(io.ldspec_miss && (p1_poisoned || p2_poisoned)) &&
-                            (io.yrot_resp.bits.yrot_r || slot_uop.taint_set)
-    } else {
-      is_valid_s2_grant := !(io.ldspec_miss && (p1_poisoned || p2_poisoned))
-    }
+    is_valid_s2_grant := !(io.ldspec_miss && (p1_poisoned || p2_poisoned)) && yrot_r
+
     when (is_valid_s2_grant) {
-      next_state := s_valid_1
-      when (p1) {
-        slot_uop.uopc := uopSTD
-        next_uopc := uopSTD
-        slot_uop.lrs1_rtype := RT_X
-        next_lrs1_rtype := RT_X
-      } .otherwise {
-        slot_uop.lrs2_rtype := RT_X
-        next_lrs2_rtype := RT_X
+      if (enableRegisterTaintTracking) {
+        next_state := Mux(slot_uop.taint_set, s_valid_1, s_taint_blocked)
+      } else {
+        next_state := s_valid_1
+      }
+      when(slot_uop.taint_set) {
+        when (p1) {
+          slot_uop.uopc := uopSTD
+          next_uopc := uopSTD
+          slot_uop.lrs1_rtype := RT_X
+          next_lrs1_rtype := RT_X
+        } .otherwise {
+          slot_uop.lrs2_rtype := RT_X
+          next_lrs2_rtype := RT_X
+        }
+      }.otherwise {
+        assert(slot_uop.uopc === uopSTA || slot_uop.uopc === uopAMO_AG)
+        when(p1) {
+          slot_uop.state_uopc := uopSTD
+          next_state_uopc := uopSTD
+        }.otherwise {
+          slot_uop.state_uopc := slot_uop.uopc
+          next_state_uopc := slot_uop.uopc
+        }
       }
     }
   }
 
   when (io.in_uop.valid) {
     slot_uop := io.in_uop.bits
+    if (enableRegisterTaintTracking) {
+      slot_uop.yrot_r := !io.in_uop.bits.taint_set || io.in_uop.bits.yrot_r 
+    }
     assert (is_invalid || io.clear || io.kill, "trying to overwrite a valid issue slot.")
   }.otherwise{
     slot_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
@@ -285,6 +310,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   // we compact it into an other entry
   when (IsKilledByBranch(io.brupdate, slot_uop)) {
     next_state := s_invalid
+    previous_state := s_invalid
   }
 
   when (!io.in_uop.valid) {
@@ -294,7 +320,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   //-------------------------------------------------------------
   // Request Logic - yrot_r is STT
   // yrot_r always high if STT is disabled
-  io.request := is_valid && p1 && p2 && p3 && ppred && yrot_r && !io.kill
+  io.request := is_valid && p1 && p2 && p3 && ppred && yrot_r && !io.kill && state =/= s_taint_blocked
   io.blocked_taint := is_valid && p1 && p2 && p3 && ppred && !io.kill && !yrot_r
   val high_priority = slot_uop.is_br || slot_uop.is_jal || slot_uop.is_jalr
   io.request_hp := io.request && high_priority
@@ -309,7 +335,27 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     }
   } .elsewhen (state === s_valid_2) {
     io.request := (p1 || p2) && ppred && yrot_r && !io.kill
-  } .otherwise {
+  } .elsewhen (state === s_taint_blocked) {
+    assert(previous_state === s_valid_1 || previous_state === s_valid_2)
+    when(yrot_r && previous_state === s_valid_2 &&
+        (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
+      next_state := s_valid_1
+      next_uopc := state_uopc
+      when(state_uopc === uopSTD) {
+        slot_uop.uopc := uopSTD
+        slot_uop.lrs1_rtype := RT_X
+        next_lrs1_rtype := RT_X
+      }.otherwise {
+        slot_uop.lrs2_rtype := RT_X
+        next_lrs2_rtype := RT_X
+      }
+    }.elsewhen(yrot_r && previous_state === s_valid_2 ||
+              (yrot_r && previous_state === s_valid_1)) {
+      next_state := s_invalid
+    }.elsewhen(!yrot_r) {
+      next_state := previous_state
+    }
+  }.otherwise {
     io.request := false.B
   }
 
@@ -320,14 +366,15 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   io.uop.iw_p2_poisoned := p2_poisoned
 
   // micro-op will vacate due to grant.
-  val may_vacate = io.grant && ((state === s_valid_1) || (state === s_valid_2) && p1 && p2 && ppred)
+  val may_vacate = io.grant && ((state === s_valid_1) || (state === s_valid_2) && p1 && p2 && ppred && yrot_r)
   val squash_grant = io.ldspec_miss && (p1_poisoned || p2_poisoned) 
-  val taint_squash_grant = if (!enableRegisterTaintTracking) !slot_uop.taint_set && slot_uop.transmitter
-                           else !slot_uop.taint_set && slot_uop.transmitter && (!io.yrot_resp.bits.yrot_r)
-  io.will_be_valid := is_valid && !(may_vacate && !squash_grant && !taint_squash_grant)
+  val taint_squash_vacate = if (enableRegisterTaintTracking) !slot_uop.taint_set && slot_uop.transmitter else false.B
+  io.will_be_valid := is_valid && !(may_vacate && !squash_grant && !taint_squash_vacate)
 
   io.out_uop            := slot_uop
   io.out_uop.iw_state   := next_state
+  io.out_uop.old_iw_state := state
+  io.out_uop.state_uopc := next_state_uopc
   io.out_uop.uopc       := next_uopc
   io.out_uop.lrs1_rtype := next_lrs1_rtype
   io.out_uop.lrs2_rtype := next_lrs2_rtype
@@ -348,7 +395,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   io.out_uop.iw_p1_poisoned := p1_poisoned
   io.out_uop.iw_p2_poisoned := p2_poisoned
 
-  when (state === s_valid_2) {
+  when (state === s_valid_2 && slot_uop.taint_set) {
     when (p1 && p2 && ppred) {
       ; // send out the entire instruction as one uop
     } .elsewhen (p1 && ppred) {

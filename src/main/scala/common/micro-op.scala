@@ -46,6 +46,8 @@ class MicroOp(implicit p: Parameters) extends BoomBundle
   // What is the next state of this uop in the issue window? useful
   // for the compacting queue.
   val iw_state         = UInt(2.W)
+  val old_iw_state     = UInt(2.W)
+  val state_uopc       = UInt(UOPC_SZ.W)
   // Has operand 1 or 2 been waken speculatively by a load?
   // Only integer operands are speculaively woken up,
   // so we can ignore p3.
