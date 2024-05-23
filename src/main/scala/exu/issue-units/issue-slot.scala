@@ -160,6 +160,10 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     if (enableRegisterTaintTracking) {
     when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
       next_state := Mux(slot_uop.taint_set, s_invalid, s_taint_blocked)
+      when(state === s_valid_2) {
+          slot_uop.state_uopc := 0.U
+          next_state_uopc := 0.U
+      }
       }
     } else {
     when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
@@ -188,6 +192,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
         }
       }.otherwise {
         assert(slot_uop.uopc === uopSTA || slot_uop.uopc === uopAMO_AG)
+        assert(!(p1 && p2 && ppred))
         when(p1) {
           slot_uop.state_uopc := uopSTD
           next_state_uopc := uopSTD
@@ -341,7 +346,10 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
         (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
       next_state := s_valid_1
       next_uopc := state_uopc
-      when(state_uopc === uopSTD) {
+      when(state_uopc === 0.U) {
+        next_state := s_invalid
+      }
+      .elsewhen(state_uopc === uopSTD) {
         slot_uop.uopc := uopSTD
         slot_uop.lrs1_rtype := RT_X
         next_lrs1_rtype := RT_X
@@ -369,7 +377,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   val may_vacate = io.grant && ((state === s_valid_1) || (state === s_valid_2) && p1 && p2 && ppred && yrot_r)
   val squash_grant = io.ldspec_miss && (p1_poisoned || p2_poisoned) 
   val taint_squash_vacate = if (enableRegisterTaintTracking) !slot_uop.taint_set && slot_uop.transmitter else false.B
-  io.will_be_valid := is_valid && !(may_vacate && !squash_grant && !taint_squash_vacate)
+  io.will_be_valid := is_valid && !(may_vacate && !squash_grant && !taint_squash_vacate) && !(next_state === s_invalid)
 
   io.out_uop            := slot_uop
   io.out_uop.iw_state   := next_state

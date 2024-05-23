@@ -847,6 +847,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     if (enableRenameTaintTracking) {
       dis_uops(w).yrot := ren_taint_tracker.io.ren2_yrot(w)
       dis_uops(w).yrot_r := ren_taint_tracker.io.ren2_yrot_r(w) || !dis_uops(w).transmitter //taint tracker should account for same-cycle wakeups||
+      dis_uops(w).taint_set := true.B
     } else {
       dis_uops(w).yrot_r := true.B 
     }
