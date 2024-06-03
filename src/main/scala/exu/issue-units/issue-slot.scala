@@ -137,7 +137,10 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   } .otherwise {
     state := next_state
     previous_state := state
-    state_uopc := state_uopc
+    slot_uop.uopc := next_uopc
+    state_uopc := next_state_uopc
+    slot_uop.lrs1_rtype := next_lrs1_rtype
+    slot_uop.lrs2_rtype := next_lrs2_rtype
   }
 
   //-----------------------------------------------------------------------------
@@ -159,7 +162,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     // try to issue this uop.
     if (enableRegisterTaintTracking) {
     when (!(io.ldspec_miss && (p1_poisoned || p2_poisoned))) {
-      next_state := Mux(slot_uop.taint_set, s_invalid, s_taint_blocked)
+      next_state := Mux(slot_uop.taint_set || !slot_uop.transmitter, s_invalid, s_taint_blocked)
       when(state === s_valid_2) {
           slot_uop.state_uopc := 0.U
           next_state_uopc := 0.U
@@ -182,22 +185,17 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
       }
       when(slot_uop.taint_set) {
         when (p1) {
-          slot_uop.uopc := uopSTD
           next_uopc := uopSTD
-          slot_uop.lrs1_rtype := RT_X
           next_lrs1_rtype := RT_X
         } .otherwise {
-          slot_uop.lrs2_rtype := RT_X
           next_lrs2_rtype := RT_X
         }
       }.otherwise {
         assert(slot_uop.uopc === uopSTA || slot_uop.uopc === uopAMO_AG)
         assert(!(p1 && p2 && ppred))
         when(p1) {
-          slot_uop.state_uopc := uopSTD
           next_state_uopc := uopSTD
         }.otherwise {
-          slot_uop.state_uopc := slot_uop.uopc
           next_state_uopc := slot_uop.uopc
         }
       }
@@ -206,18 +204,17 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
 
   when (io.in_uop.valid) {
     slot_uop := io.in_uop.bits
-    if (enableRegisterTaintTracking) {
-      slot_uop.yrot_r := !io.in_uop.bits.taint_set || io.in_uop.bits.yrot_r 
-    }
     assert (is_invalid || io.clear || io.kill, "trying to overwrite a valid issue slot.")
   }.otherwise{
-    slot_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
     if (enableRegisterTaintTracking) {
+    slot_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
     slot_uop.yrot       := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot, slot_uop.yrot)
-    slot_uop.yrot_r     := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot_r, slot_uop.yrot_r)
+    yrot_r              := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot_r, yrot_r)
     } else {
+    // Taint is always set (not used for unsecure and NDA) if we are not doing regtaint
+    slot_uop.taint_set  := true.B
     slot_uop.yrot       := slot_uop.yrot
-    slot_uop.yrot_r     := slot_uop.yrot_r
+    yrot_r              := yrot_r
     }
   }
   // Wakeup Compare Logic
@@ -350,11 +347,9 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
         next_state := s_invalid
       }
       .elsewhen(state_uopc === uopSTD) {
-        slot_uop.uopc := uopSTD
-        slot_uop.lrs1_rtype := RT_X
+        next_uopc := uopSTD
         next_lrs1_rtype := RT_X
       }.otherwise {
-        slot_uop.lrs2_rtype := RT_X
         next_lrs2_rtype := RT_X
       }
     }.elsewhen(yrot_r && previous_state === s_valid_2 ||
@@ -403,7 +398,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   io.out_uop.iw_p1_poisoned := p1_poisoned
   io.out_uop.iw_p2_poisoned := p2_poisoned
 
-  when (state === s_valid_2 && slot_uop.taint_set) {
+  when (state === s_valid_2) {
     when (p1 && p2 && ppred) {
       ; // send out the entire instruction as one uop
     } .elsewhen (p1 && ppred) {
