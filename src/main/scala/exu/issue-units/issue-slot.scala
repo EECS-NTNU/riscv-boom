@@ -304,6 +304,29 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     }
   }
 
+  when (state === s_taint_blocked) {
+  assert(previous_state === s_valid_1 || previous_state === s_valid_2)
+  when(yrot_r && previous_state === s_valid_2 &&
+      (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
+    next_state := s_valid_1
+    next_uopc := state_uopc
+    when(state_uopc === 0.U) {
+      next_state := s_invalid
+    }
+    .elsewhen(state_uopc === uopSTD) {
+      next_uopc := uopSTD
+      next_lrs1_rtype := RT_X
+    }.otherwise {
+      next_lrs2_rtype := RT_X
+    }
+  }.elsewhen(yrot_r && previous_state === s_valid_2 ||
+            (yrot_r && previous_state === s_valid_1)) {
+    next_state := s_invalid
+  }.elsewhen(!yrot_r) {
+    next_state := previous_state
+  }
+  }
+
 
   // Handle branch misspeculations
   val next_br_mask = GetNewBrMask(io.brupdate, slot_uop)
@@ -337,30 +360,11 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     }
   } .elsewhen (state === s_valid_2) {
     io.request := (p1 || p2) && ppred && yrot_r && !io.kill
-  } .elsewhen (state === s_taint_blocked) {
-    assert(previous_state === s_valid_1 || previous_state === s_valid_2)
-    when(yrot_r && previous_state === s_valid_2 &&
-        (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
-      next_state := s_valid_1
-      next_uopc := state_uopc
-      when(state_uopc === 0.U) {
-        next_state := s_invalid
-      }
-      .elsewhen(state_uopc === uopSTD) {
-        next_uopc := uopSTD
-        next_lrs1_rtype := RT_X
-      }.otherwise {
-        next_lrs2_rtype := RT_X
-      }
-    }.elsewhen(yrot_r && previous_state === s_valid_2 ||
-              (yrot_r && previous_state === s_valid_1)) {
-      next_state := s_invalid
-    }.elsewhen(!yrot_r) {
-      next_state := previous_state
-    }
   }.otherwise {
     io.request := false.B
   }
+  
+
 
   //assign outputs
   io.valid := is_valid
