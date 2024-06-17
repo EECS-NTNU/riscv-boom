@@ -262,7 +262,8 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
 
   // STT
   for (i <- 0 until numTaintWakeupPorts) {
-    when (io.taint_wakeup_port(i).valid &&
+    when (next_uop.taint_set &&
+         io.taint_wakeup_port(i).valid &&
         (io.taint_wakeup_port(i).bits === next_uop.yrot)) {
       yrot_r := true.B
     }
