@@ -94,6 +94,13 @@ class RenameTaintTracker(
         isBetween
     }
 
+    def mispredictIdxBetween(idx: UInt) : Bool = {
+        val isBetween = Mux(io.ldq_btc_head <= io.brupdate.b2.uop.ldq_idx,
+                           (io.ldq_btc_head <= idx) && (idx < io.brupdate.b2.uop.ldq_idx),
+                           (io.ldq_btc_head <= idx) || (idx < io.brupdate.b2.uop.ldq_idx))
+            isBetween
+    }
+
     // Helper function for finding the correct dependencies intra-cycle and then
     // invoking GetTaintEntry() to find the youngest root
     def FindAndCompareTaints(
@@ -342,7 +349,7 @@ class RenameTaintTracker(
 
     if (enableCheckpointTaints) {
         for (i <- 0 until plWidth) {
-            when(ren1_br_tags(i).valid && io.dis_fire(i)) {
+            when(ren1_br_tags(i).valid) {
                 int_br_snapshots(ren1_br_tags(i).bits) := int_br_remap_table(i+1)
                 fp_br_snapshots(ren1_br_tags(i).bits) := fp_br_remap_table(i+1)
             }
@@ -365,13 +372,13 @@ class RenameTaintTracker(
             for (i <- 0 until numLregs) {
                 val temp_i_reg = int_br_snapshots(io.brupdate.b2.uop.br_tag)(i)
                 temp_int_file(i) := temp_i_reg
-                temp_int_file(i).valid := io.taint_wakeup_port.foldLeft(temp_i_reg.valid && idxBetween(temp_i_reg.ldq_idx))
+                temp_int_file(i).valid := io.taint_wakeup_port.foldLeft(temp_i_reg.valid && mispredictIdxBetween(temp_i_reg.ldq_idx))
                                             {case (valid, wakeup) => valid && !(wakeup.valid && wakeup.bits === temp_i_reg.ldq_idx)}
 
 
                 val temp_f_reg = fp_br_snapshots(io.brupdate.b2.uop.br_tag)(i)
                 temp_fp_file(i) := temp_f_reg
-                temp_fp_file(i).valid := io.taint_wakeup_port.foldLeft(temp_f_reg.valid && idxBetween(temp_f_reg.ldq_idx))
+                temp_fp_file(i).valid := io.taint_wakeup_port.foldLeft(temp_f_reg.valid && mispredictIdxBetween(temp_f_reg.ldq_idx))
                                             {case (valid, wakeup) => valid && !(wakeup.valid && wakeup.bits === temp_f_reg.ldq_idx)}
             }
 

@@ -1517,8 +1517,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   rob.io.wb_resps(0).bits.predicated := ll_mem_wbarb.io.out.bits.predicated
   rob.io.wb_resps(0).bits.fflags := ll_mem_wbarb.io.out.bits.fflags
 
-  rob.io.debug_wb_valids(0) := ll_mem_wbarb.io.out.valid && ll_uop.dst_rtype =/= RT_X && !ll_mem_wbarb.io.out.bits.noBroadcast
-  rob.io.debug_wb_wdata(0)  := ll_mem_wbarb.io.out.bits.data
+  // These ones only care about data so they receive it with the data, not broadcast
+  rob.io.debug_wb_valids(0)  := ll_mem_wbarb.io.out.valid && ll_uop.dst_rtype =/= RT_X && !ll_mem_wbarb.io.out.bits.noData
+  rob.io.debug_wb_wdata(0)   := ll_mem_wbarb.io.out.bits.data
+  rob.io.debug_wb_rob_idx(0) := ll_mem_wbarb.io.out.bits.uop.rob_idx
   }
   var cnt = 1
   for (i <- 1 until memWidth) {
@@ -1535,8 +1537,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     rob.io.wb_resps(cnt).bits.data  := mem_nda_resps(i).bits.data
     rob.io.wb_resps(cnt).bits.predicated  := mem_nda_resps(i).bits.predicated
     rob.io.wb_resps(cnt).bits.fflags  := mem_nda_resps(i).bits.fflags
-    rob.io.debug_wb_valids(cnt) := mem_nda_resps(i).valid && mem_uop.dst_rtype =/= RT_X && !mem_nda_resps(i).bits.noBroadcast
-    rob.io.debug_wb_wdata(cnt)  := mem_nda_resps(i).bits.data
+    // These ones only care about data so they receive it with the data, not broadcast
+    rob.io.debug_wb_valids(cnt)  := mem_nda_resps(i).valid && mem_uop.dst_rtype =/= RT_X && !mem_nda_resps(i).bits.noData
+    rob.io.debug_wb_wdata(cnt)   := mem_nda_resps(i).bits.data
+    rob.io.debug_wb_rob_idx(cnt) := mem_nda_resps(i).bits.uop.rob_idx
     }
     cnt += 1
   }
@@ -1551,6 +1555,9 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       rob.io.wb_resps(cnt).valid := resp.valid && !(wb_uop.uses_stq && !wb_uop.is_amo)
       rob.io.wb_resps(cnt).bits  <> resp.bits
       rob.io.debug_wb_valids(cnt) := resp.valid && wb_uop.rf_wen && wb_uop.dst_rtype === RT_FIX
+      if (enableNDA) {
+      rob.io.debug_wb_rob_idx(cnt) := wb_uop.rob_idx
+      }
       if (eu.hasFFlags) {
         rob.io.fflags(f_cnt) <> resp.bits.fflags
         f_cnt += 1
@@ -1573,6 +1580,9 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       rob.io.fflags(f_cnt) <> wakeup.bits.fflags
       rob.io.debug_wb_valids(cnt) := wakeup.valid
       rob.io.debug_wb_wdata(cnt) := wdata
+      if (enableNDA) {
+      rob.io.debug_wb_rob_idx(cnt) := wakeup.bits.uop.rob_idx
+      }
       cnt += 1
       f_cnt += 1
 

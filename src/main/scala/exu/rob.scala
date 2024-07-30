@@ -80,6 +80,7 @@ class RobIo(
   // Also need to know when loads write back, whereas we don't need loads to unbusy.
   val debug_wb_valids = Input(Vec(numWakeupPorts, Bool()))
   val debug_wb_wdata  = Input(Vec(numWakeupPorts, Bits(xLen.W)))
+  val debug_wb_rob_idx = if (enableNDA) Input(Vec(numWakeupPorts, UInt(robAddrSz.W))) else null
 
   val fflags = Flipped(Vec(numFpuPorts, new ValidIO(new FFlagsResp())))
   val lxcpt = Flipped(new ValidIO(new Exception())) // LSU
@@ -507,9 +508,13 @@ class Rob(
 
     for (i <- 0 until numWakeupPorts) {
       val rob_idx = io.wb_resps(i).bits.uop.rob_idx
+      if (!enableNDA) {
       when (io.debug_wb_valids(i) && MatchBank(GetBankIdx(rob_idx))) {
         rob_debug_wdata(GetRowIdx(rob_idx)) := io.debug_wb_wdata(i)
-      }
+      }} else {
+      when (io.debug_wb_valids(i) && MatchBank(GetBankIdx(io.debug_wb_rob_idx(i)))) {
+        rob_debug_wdata(GetRowIdx(io.debug_wb_rob_idx(i))) := io.debug_wb_wdata(i)
+      }}
       val temp_uop = rob_uop(GetRowIdx(rob_idx))
 
       assert (!(io.wb_resps(i).valid && MatchBank(GetBankIdx(rob_idx)) &&
@@ -542,10 +547,23 @@ class Rob(
   var will_throw_exception = false.B
   var block_xcpt   = false.B
 
+  val mem_commits = Wire(Vec(coreWidth+1, UInt(4.W)))
+
+  if (enableRegisterTaintTracking || enableRenameTaintTracking) {
+    mem_commits := ((can_commit zip io.commit.uops) map { case (w, u) => (w && u.uses_ldq)})
+                   .scanLeft(0.U(4.W)) { case (total, commit) => total + commit.asUInt() }
+  } else {
+    for (w <- 0 until coreWidth+1) {
+      mem_commits(w) := 0.U
+    }
+  }
+
+  dontTouch(mem_commits)
+
   for (w <- 0 until coreWidth) {
     will_throw_exception = (can_throw_exception(w) && !block_commit && !block_xcpt) || will_throw_exception
 
-    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit
+    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w) < memWidth.U)
     block_commit         = (rob_head_vals(w) &&
                            (!can_commit(w) || can_throw_exception(w))) || block_commit
     block_xcpt           = will_commit(w)

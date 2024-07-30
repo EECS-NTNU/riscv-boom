@@ -1322,7 +1322,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   // Task 4: Speculatively wakeup loads 1 cycle before they come back
   for (w <- 0 until memWidth) {
     io.core.spec_ld_wakeup(w).valid := enableFastLoadUse.B          &&
-                                       (!enableNDA.B || isNonSpeculative(ldq(mem_incoming_uop(w).ldq_idx).bits)) &&
+                                       (!enableNDA.B) &&
                                        fired_load_incoming(w)       &&
                                        !mem_incoming_uop(w).fp_val  &&
                                        mem_incoming_uop(w).pdst =/= 0.U
@@ -1377,7 +1377,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     when (valid && ldq_e.valid && isNonSpeculative(ldq_e.bits) && ldq_e.bits.succeeded) {
       canIncrementHead(w) := true.B
-      when(ldq_e.bits.needs_to_rebroadcast) {
+      //Check if head is ready to rebroadcast (i.e. has completed) and ensure
+      //that the broadcast lane is not currently being used by an atomic (amo) instruction
+      when(ldq_e.bits.needs_to_rebroadcast && !(io.dmem.resp(w).bits.uop.is_amo && io.dmem.resp(w).valid)) {
         canBroadcastHead(w) := true.B
       }
     }
@@ -1559,12 +1561,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   for (w <- 0 until memWidth) {
     io.core.exe(w).mem_iresp.valid         := (canBroadcastHead(w) && ldq(ldqIdxHead(w)).bits.uop.dst_rtype === RT_FIX) ||
-                                              (dataLive(w) && dataUop(w).dst_rtype === RT_FIX)
+                                              (dataLive(w) && dataUop(w).dst_rtype === RT_FIX) ||
+                                              io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo
     io.core.exe(w).mem_iresp.bits.data          := dmemData(w)
     io.core.exe(w).mem_iresp.bits.uop           := dataUop(w)
-    io.core.exe(w).mem_iresp.bits.broadcastUop  := ldq(ldqIdxHead(w)).bits.uop
-    io.core.exe(w).mem_iresp.bits.noData        := !dataLive(w) || dataUop(w).dst_rtype =/= RT_FIX
-    io.core.exe(w).mem_iresp.bits.noBroadcast   := !canBroadcastHead(w) || ldq(ldqIdxHead(w)).bits.uop.dst_rtype =/= RT_FIX
+    io.core.exe(w).mem_iresp.bits.broadcastUop  := Mux(io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo,
+                                                     dataUop(w),
+                                                     ldq(ldqIdxHead(w)).bits.uop)
+    io.core.exe(w).mem_iresp.bits.noData        := (!dataLive(w) || dataUop(w).dst_rtype =/= RT_FIX) &&
+                                                   !(io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo)
+    io.core.exe(w).mem_iresp.bits.noBroadcast   := (!canBroadcastHead(w) || ldq(ldqIdxHead(w)).bits.uop.dst_rtype =/= RT_FIX) &&
+                                                   !(io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo)
     io.core.exe(w).mem_iresp.bits.splitDataAndBroadcast := true.B
     
 
