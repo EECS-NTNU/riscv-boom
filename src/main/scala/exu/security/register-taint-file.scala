@@ -82,19 +82,19 @@ class RegisterTaintTracker(
         val t3_youngness = Mux(io.ldq_flipped === t3_flipped,
                                                     numLdqEntries.U - t3_age, (numLdqEntries*2).U - t3_age)
         
-        val t1_oldest = (t1_valid 
+        val t1_youngest = (t1_valid 
                         && ((!t2_valid) || t1_youngness <= t2_youngness)
                         && ((!t3_valid) || t1_youngness <= t3_youngness))
-        val t2_oldest = ((!t1_oldest)
+        val t2_youngest = ((!t1_youngest)
                         && t2_valid
                         && ((!t3_valid) || t2_youngness <= t3_youngness))
-        val t3_oldest = ((!t1_oldest)
-                        && (!t2_oldest)
+        val t3_youngest = ((!t1_youngest)
+                        && (!t2_youngest)
                         && t3_valid) 
         
-        assert(!(t1_oldest && t2_oldest))
-        assert(!(t1_oldest && t3_oldest))
-        assert(!(t2_oldest && t3_oldest)) 
+        assert(!(t1_youngest && t2_youngest))
+        assert(!(t1_youngest && t3_youngest))
+        assert(!(t2_youngest && t3_youngest)) 
 
         val chosen_t = Wire(new TaintEntry())
 
@@ -102,11 +102,11 @@ class RegisterTaintTracker(
         chosen_t.ldq_idx := 0.U
         chosen_t.flipped_age := false.B
         
-        when(t1_oldest) {
+        when(t1_youngest) {
             chosen_t := t1
-        } .elsewhen(t2_oldest) {
+        } .elsewhen(t2_youngest) {
             chosen_t := t2
-        } .elsewhen(t3_oldest) {
+        } .elsewhen(t3_youngest) {
             chosen_t := t3
         }
         
