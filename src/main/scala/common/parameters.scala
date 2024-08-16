@@ -104,7 +104,7 @@ case class BoomCoreParams(
   enableCheckpointTaints: Boolean = false,
   inOrderBranchResolution: Boolean = false,
   enableNDA: Boolean = false,
-  traceDebug: Boolean = false,
+  traceDebug: Boolean = true,
   traceStats: Boolean = false,
 
   /* debug stuff */

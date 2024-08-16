@@ -42,6 +42,24 @@ import boom.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.exu.FUConstants._
 import boom.util._
 
+class TraceCounterWithCommitsBundle(implicit p: Parameters) extends BoomBundle {
+  val counter = UInt(32.W)
+  val commitBundles = Vec(coreWidth, new TraceCommitBundle())
+}
+
+class TraceCommitBundle(implicit p: Parameters) extends BoomBundle {
+  val valid = Bool()
+  val int_reg = Bool()
+  val fp_reg = Bool()
+  val pad = Vec(5, Bool())
+  val ldst = UInt(8.W)
+  //val int_reg = UInt(8.W)
+  //val fp_reg = UInt(8.W)
+  //This is 40 bits
+  val debug_pc = UInt(coreMaxAddrBits.W)
+  val debug_wdata = UInt(xLen.W)
+}
+
 class TraceDebugBundle(implicit p: Parameters) extends BoomBundle {
 
   val traceTimestamp = UInt(64.W)
@@ -1769,8 +1787,11 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
   }
 
-  if (traceMode == TRACE_DEBUG && io.traceDoctor.traceWidth >= 512) { //((14*ldqAddrSz) + 134)) {
+  if (traceMode == TRACE_DEBUG && io.traceDoctor.traceWidth >= 512) { //(coreWidth * 128) {
     // If TracerV is also included, this assignment is redundant
+    val minstret = RegInit(0.U(32.W))
+
+    minstret := minstret + PopCount(rob.io.commit.arch_valids)
     for (w <- 0 until coreWidth) {
       io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx
     }
@@ -1796,76 +1817,41 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceValids.reverse.asUInt()(coreWidth - 1, 0).pad(64),
       traceAddresses.map(a => a(63, 0).pad(64)).reverse.asUInt()
     ).reverse).pad(io.traceDoctor.traceWidth).asBools */
-    
-    val traceData = Reg(new TraceDebugBundle)
 
-    traceData.traceTimestamp        := traceTimestamp(63, 0).pad(64)
-    traceData.ldq_head              := io.lsu.ldq_head
-    traceData.ldq_btc_head          := io.lsu.ldq_btc_head
-    traceData.ldq_tail              := io.lsu.ldq_tail
+    val traceBundleWithCounter = Wire(new TraceCounterWithCommitsBundle())
 
-    if (enableRenameTaintTracking) traceData.int_taints_valid      := ren_taint_tracker.io.int_taint_valids
+    val traceBundle = Wire(Vec(coreWidth, new TraceCommitBundle()))
 
-    traceData.int_issue_0_valid     := int_iss_unit.io.slot0_valid
-    traceData.int_issue_0_yrot      := int_iss_unit.io.slot0_yrot
-    traceData.int_issue_0_yrot_r    := int_iss_unit.io.slot0_yrot_r
+    for (w <- 0 until coreWidth) {
+        traceBundle(w).valid := RegNext(rob.io.commit.arch_valids(w))
+        traceBundle(w).int_reg := RegNext((rob.io.commit.uops(w).dst_rtype === RT_FIX && rob.io.commit.uops(w).ldst =/= 0.U))
+        traceBundle(w).fp_reg := RegNext((rob.io.commit.uops(w).dst_rtype === RT_FLT))
+        traceBundle(w).pad := RegNext(VecInit.fill(5)(true.B))
+        traceBundle(w).ldst    := RegNext(rob.io.commit.uops(w).ldst)
+        
+        //traceBundle(w).debug_inst := RegNext(Mux(rob.io.commit.uops(w).is_rvc,
+        //                            Cat(0.U(16.W), rob.io.commit.uops(w).inst(15,0)),
+        //                            rob.io.commit.uops(w).debug_inst))
+        //
+        traceBundle(w).debug_pc := Sext((AlignPCToBoundary(io.ifu.debug_fetch_pc(w), icBlockBytes)
+                                    + RegNext(rob.io.commit.uops(w).pc_lob)
+                                    - Mux(RegNext(rob.io.commit.uops(w).edge_inst), 2.U, 0.U))(vaddrBits-1,0)
+                                  , xLen)
+        
+        traceBundle(w).debug_wdata := RegNext(rob.io.commit.debug_wdata(w))
+    }
 
-    traceData.fp_issue_0_valid      := fp_pipeline.io.slot0_valid
-    traceData.fp_issue_0_yrot       := fp_pipeline.io.slot0_yrot
-    traceData.fp_issue_0_yrot_r     := fp_pipeline.io.slot0_yrot_r
-
-    traceData.agu_issue_0_valid     := mem_iss_unit.io.slot0_valid
-    traceData.agu_issue_0_yrot      := mem_iss_unit.io.slot0_yrot
-    traceData.agu_issue_0_yrot_r    := mem_iss_unit.io.slot0_yrot_r
-
-    traceData.taint_wakeup_0_valid  := io.lsu.taint_wakeup_port(0).valid
-    traceData.taint_wakeup_0_port   := io.lsu.taint_wakeup_port(0).bits
-    
-    traceData.taint_wakeup_1_valid  := io.lsu.taint_wakeup_port(1).valid
-    traceData.taint_wakeup_1_port   := io.lsu.taint_wakeup_port(1).bits
-
-    traceData.dec_0_fire            := dec_fire(0)
-    if (enableRenameTaintTracking) traceData.ren1_0_yrot           := ren_taint_tracker.io.ren1_yrot(0)
-    if (enableRenameTaintTracking) traceData.ren1_0_yrot_r         := ren_taint_tracker.io.ren1_yrot_r(0)
-    if (enableRenameTaintTracking) traceData.ren1_0_tent_ldq_idx   := ren_taint_tracker.io.ren1_tent_ldq_idx(0)
-
-    traceData.dec_1_fire            := dec_fire(1)
-    if (enableRenameTaintTracking) traceData.ren1_1_yrot           := ren_taint_tracker.io.ren1_yrot(1)
-    if (enableRenameTaintTracking) traceData.ren1_1_yrot_r         := ren_taint_tracker.io.ren1_yrot_r(1)
-    if (enableRenameTaintTracking) traceData.ren1_1_tent_ldq_idx   := ren_taint_tracker.io.ren1_tent_ldq_idx(1)
-
-    traceData.dis_0_fire            := dis_fire(0)
-    if (enableRenameTaintTracking) traceData.ren2_0_yrot           := ren_taint_tracker.io.ren2_yrot(0)
-    if (enableRenameTaintTracking) traceData.ren2_0_yrot_r         := ren_taint_tracker.io.ren2_yrot_r(0)
-
-    traceData.dis_1_fire            := dis_fire(1)
-    if (enableRenameTaintTracking) traceData.ren2_1_yrot           := ren_taint_tracker.io.ren2_yrot(1)
-    if (enableRenameTaintTracking) traceData.ren2_1_yrot_r         := ren_taint_tracker.io.ren2_yrot_r(1)
-  
-    if (enableRenameTaintTracking) traceData.loads_last_cycle      := ren_taint_tracker.io.loads_last_cycle
-    if (enableRenameTaintTracking) traceData.load_ops_0            := ren_taint_tracker.io.load_ops(0)
-    if (enableRenameTaintTracking) traceData.load_ops_1            := ren_taint_tracker.io.load_ops(1)
-    if (enableRenameTaintTracking) traceData.load_ops_2            := ren_taint_tracker.io.load_ops(2)
-    if (enableRenameTaintTracking) traceData.ldq_will_flip_0       := ren_taint_tracker.io.ldq_will_flip(0)
-    if (enableRenameTaintTracking) traceData.ldq_will_flip_1       := ren_taint_tracker.io.ldq_will_flip(1)
-    if (enableRenameTaintTracking) traceData.ldq_will_flip_2       := ren_taint_tracker.io.ldq_will_flip(2)
-    if (enableRenameTaintTracking) traceData.ldq_will_flip_3       := ren_taint_tracker.io.ldq_will_flip(3)
-
-    traceData.rollback            := rob.io.commit.rollback
-    traceData.br_mispredict       := b2.mispredict
-    traceData.core_exception      := io.lsu.exception
-    traceData.misLDQ              := misLDQ
-
-    io.traceDoctor.valid := true.B
-    io.traceDoctor.bits := traceData.asUInt().pad(io.traceDoctor.traceWidth).asBools
-
+    traceBundleWithCounter.commitBundles := traceBundle
+    traceBundleWithCounter.counter := minstret
+    io.traceDoctor.valid := traceBundle.map{w => w.valid}.reduce(_||_)
+    io.traceDoctor.bits := traceBundleWithCounter.asUInt().pad(io.traceDoctor.traceWidth).asBools
   }
   if (traceMode == TRACE_STATS && io.traceDoctor.traceWidth >= 512) {
     // If TracerV is also included, this assignment is redundant
     for (w <- 0 until coreWidth) {
       io.ifu.debug_ftq_idx(w) := rob.io.commit.uops(w).ftq_idx
     }
-      val traceStats = Reg(new TraceStatsBundle)
+      val traceStats = Reg(new TraceStatsBundle())
 
       traceStats.numCommit := PopCount(rob.io.commit.valids)
       traceStats.isBranch := rob.io.commit.uops map (u => u.is_br)
