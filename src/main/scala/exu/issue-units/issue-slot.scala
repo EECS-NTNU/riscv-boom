@@ -200,6 +200,34 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
         }
       }
     }
+  } .elsewhen (state === s_taint_blocked) {
+    assert(previous_state === s_valid_1 || previous_state === s_valid_2)
+    assert(enableRegisterTaintTracking.B)
+    //Partial dispatch, i.e. we sent data or address to stq
+    when(yrot_r && previous_state === s_valid_2 &&
+        (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
+      next_state := s_valid_1
+      next_uopc := state_uopc
+      //This happens when an s_valid_2 has both operands ready and can terminate
+      //This should never trip cause state_uopc has to be something othern than 0.U
+      //TODO: Can remove?
+      when(state_uopc === 0.U) {
+        next_state := s_invalid
+      }
+      .elsewhen(state_uopc === uopSTD) {
+        next_uopc := uopSTD
+        next_lrs1_rtype := RT_X
+      }.otherwise {
+        next_lrs2_rtype := RT_X
+      }
+    //Full dispatch, we sent full uop and yrot was valid
+    }.elsewhen(yrot_r && previous_state === s_valid_2 ||
+              (yrot_r && previous_state === s_valid_1)) {
+      next_state := s_invalid
+    //Failed dispatch
+    }.elsewhen(!yrot_r) {
+      next_state := previous_state
+    }
   }
 
   when (io.in_uop.valid) {
@@ -305,29 +333,6 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
     }
   }
 
-  when (state === s_taint_blocked) {
-  assert(previous_state === s_valid_1 || previous_state === s_valid_2)
-  when(yrot_r && previous_state === s_valid_2 &&
-      (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
-    next_state := s_valid_1
-    next_uopc := state_uopc
-    when(state_uopc === 0.U) {
-      next_state := s_invalid
-    }
-    .elsewhen(state_uopc === uopSTD) {
-      next_uopc := uopSTD
-      next_lrs1_rtype := RT_X
-    }.otherwise {
-      next_lrs2_rtype := RT_X
-    }
-  }.elsewhen(yrot_r && previous_state === s_valid_2 ||
-            (yrot_r && previous_state === s_valid_1)) {
-    next_state := s_invalid
-  }.elsewhen(!yrot_r) {
-    next_state := previous_state
-  }
-  }
-
 
   // Handle branch misspeculations
   val next_br_mask = GetNewBrMask(io.brupdate, slot_uop)
@@ -342,6 +347,9 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   when (!io.in_uop.valid) {
     slot_uop.br_mask := next_br_mask
   }
+
+
+  assert(!(!yrot_r && slot_uop.is_problematic))
 
   //-------------------------------------------------------------
   // Request Logic - yrot_r is STT

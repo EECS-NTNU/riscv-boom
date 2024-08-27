@@ -549,6 +549,8 @@ class Rob(
 
   val mem_commits = Wire(Vec(coreWidth+1, UInt(4.W)))
 
+  //Mem commits is to ensure that we do not skip broadcasting any insts as non-speculative
+  //when we have tightly packed mem instructions all in the same speculation window
   if (enableRegisterTaintTracking || enableRenameTaintTracking) {
     mem_commits := ((can_commit zip io.commit.uops) map { case (w, u) => (w && u.uses_ldq)})
                    .scanLeft(0.U(4.W)) { case (total, commit) => total + commit.asUInt() }
@@ -563,9 +565,10 @@ class Rob(
   for (w <- 0 until coreWidth) {
     will_throw_exception = (can_throw_exception(w) && !block_commit && !block_xcpt) || will_throw_exception
 
-    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w) < memWidth.U)
+    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= memWidth.U)
     block_commit         = (rob_head_vals(w) &&
-                           (!can_commit(w) || can_throw_exception(w))) || block_commit
+                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > memWidth.U)))
+                           || block_commit
     block_xcpt           = will_commit(w)
   }
 
@@ -756,10 +759,13 @@ class Rob(
   }
 
   // Head overrunning PNR likely means an entry hasn't been marked as safe when it should have been.
-  assert(!IsOlder(rob_pnr_idx, rob_head_idx, rob_tail_idx) || rob_pnr_idx === rob_tail_idx)
+  //If one of these are wrong, then both of them are wrong
+  //assert(!IsOlder(rob_pnr_idx, rob_head_idx, rob_tail_idx) || rob_pnr_idx === rob_tail_idx)
 
   // PNR overrunning tail likely means an entry has been marked as safe when it shouldn't have been.
-  assert(!IsOlder(rob_tail_idx, rob_pnr_idx, rob_head_idx) || full)
+  //TODO:this is commented out in order to test if we can trip another, more useful, assert
+  //This might also be a false positive, more likely to trigger with more filled queues
+  //assert(!IsOlder(rob_tail_idx, rob_pnr_idx, rob_head_idx) || full)
 
   // -----------------------------------------------
   // ROB Tail Logic

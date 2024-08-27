@@ -820,6 +820,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     for (w <- 0 until issueParams.find(_.iqType == IQT_FP.litValue).get.issueWidth) {
       reg_taint_tracker.io.req_uops(iss_idx) := fp_pipeline.io.req_uops(w)
       fp_pipeline.io.yrot_resp(w) := reg_taint_tracker.io.yrot_resp(iss_idx)
+      
       ordered_yrot_r(iss_idx) := reg_taint_tracker.io.yrot_resp(iss_idx).bits.yrot_r || (!fp_pipeline.io.req_uops(w).valid)
       iss_idx += 1
     }
