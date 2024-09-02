@@ -201,6 +201,8 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
       }
     }
   } .elsewhen (state === s_taint_blocked) {
+    assert(!(previous_state === s_invalid))
+    assert(!(previous_state === s_taint_blocked))
     assert(previous_state === s_valid_1 || previous_state === s_valid_2)
     assert(enableRegisterTaintTracking.B)
     //Partial dispatch, i.e. we sent data or address to stq
@@ -221,12 +223,15 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
         next_lrs2_rtype := RT_X
       }
     //Full dispatch, we sent full uop and yrot was valid
-    }.elsewhen(yrot_r && previous_state === s_valid_2 ||
+    }.elsewhen((yrot_r && previous_state === s_valid_2) ||
               (yrot_r && previous_state === s_valid_1)) {
       next_state := s_invalid
     //Failed dispatch
     }.elsewhen(!yrot_r) {
       next_state := previous_state
+    }.otherwise{
+      //We did something wrong, we should always be leaving this state
+      assert(false.B)
     }
   }
 
@@ -341,7 +346,6 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   // we compact it into an other entry
   when (IsKilledByBranch(io.brupdate, slot_uop)) {
     next_state := s_invalid
-    previous_state := s_invalid
   }
 
   when (!io.in_uop.valid) {

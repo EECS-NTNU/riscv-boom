@@ -181,6 +181,8 @@ class RegisterTaintTracker(
             new_tent.flipped_age := req_uops(i).ldq_flipped
             new_tent.valid := idxBetween(req_uops(i).ldq_idx)
         }.elsewhen(req_valids(i) && (!req_uops(i).is_problematic)) {
+            //This doesnt actually do anything, just a reminder that this is 
+            //the desired behavior
             new_taint_entries(i) := t_ent
         }. otherwise {
             new_tent.valid := false.B

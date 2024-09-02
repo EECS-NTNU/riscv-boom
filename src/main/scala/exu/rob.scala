@@ -567,8 +567,7 @@ class Rob(
 
     will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= memWidth.U)
     block_commit         = (rob_head_vals(w) &&
-                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > memWidth.U)))
-                           || block_commit
+                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > memWidth.U))) || block_commit
     block_xcpt           = will_commit(w)
   }
 
