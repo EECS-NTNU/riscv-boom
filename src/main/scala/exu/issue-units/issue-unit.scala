@@ -98,7 +98,9 @@ class IssueUnitIO(
 
   val tsc_reg          = Input(UInt(width=xLen.W))
 
-  val blocked_slots    = Output(UInt(6.W))
+  //Stats
+  val blocked_slots    = Output(UInt(8.W))
+  val filled_slots     = Output(UInt(8.W))
 
   //Debug
   val slot0_valid      = Output(Bool())

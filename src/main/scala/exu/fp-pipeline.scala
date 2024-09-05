@@ -67,6 +67,9 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     val slot0_valid      = Output(Bool())
     val slot0_yrot       = Output(UInt(ldqAddrSz.W))
     val slot0_yrot_r     = Output(Bool())
+
+    val blocked_slots    = Output(UInt(8.W))
+    val filled_slots     = Output(UInt(8.W))
   })
 
   //**********************************
@@ -115,6 +118,8 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   io.slot0_valid := issue_unit.io.slot0_valid
   io.slot0_yrot := issue_unit.io.slot0_yrot
   io.slot0_yrot_r := issue_unit.io.slot0_yrot_r
+  io.blocked_slots := issue_unit.io.blocked_slots
+  io.filled_slots := issue_unit.io.filled_slots
 
   require (exe_units.numTotalBypassPorts == 0)
 

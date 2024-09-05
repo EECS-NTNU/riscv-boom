@@ -104,11 +104,11 @@ case class BoomCoreParams(
   enableCheckpointTaints: Boolean = false,
   inOrderBranchResolution: Boolean = false,
   enableNDA: Boolean = false,
-  traceDebug: Boolean = true,
+  traceDebug: Boolean = false,
   traceStats: Boolean = false,
 
   /* debug stuff */
-  enableCommitLogPrintf: Boolean = true,
+  enableCommitLogPrintf: Boolean = false,
   enableBranchPrintf: Boolean = false,
   enableMemtracePrintf: Boolean = false,
 

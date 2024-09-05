@@ -135,6 +135,10 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   val taintsCalced = UInt(4.W)
   val yrotsOnCalc  = UInt(4.W)
   val taintedLoads = UInt(4.W)
+
+  val filledIntIssueSlots = UInt(8.W)
+  val filledFpIssueSlots = UInt(8.W)
+  val filledMemIssueSlots = UInt(8.W)
 }
 
 /**
@@ -1888,6 +1892,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
         traceStats.taintedLoads := ren_taint_tracker.io.tainted_loads
       }
 
+      traceStats.filledIntIssueSlots := int_iss_unit.io.filled_slots
+      traceStats.filledFpIssueSlots := fp_pipeline.io.filled_slots
+      traceStats.filledMemIssueSlots := mem_iss_unit.io.filled_slots
+
       io.traceDoctor.valid := true.B
       io.traceDoctor.bits := 
         Cat(Seq(
@@ -1900,8 +1908,11 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.missesInCache.pad(8),
           traceStats.taintsCalced.pad(8),
           traceStats.yrotsOnCalc.pad(8),
-          traceStats.taintedLoads.pad(8)
-        )).pad(io.traceDoctor.traceWidth).asBools()
+          traceStats.taintedLoads.pad(8),
+          traceStats.filledIntIssueSlots.pad(8),
+          traceStats.filledFpIssueSlots.pad(8),
+          traceStats.filledMemIssueSlots.pad(8)
+        ).reverse).pad(io.traceDoctor.traceWidth).asBools()
           
           
           

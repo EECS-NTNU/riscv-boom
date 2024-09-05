@@ -155,4 +155,5 @@ class IssueUnitCollapsing(
   dontTouch(assigned_issue_debug)
 
   io.blocked_slots := PopCount(issue_slots map (is => is.blocked_taint))
+  io.filled_slots := PopCount(issue_slots map (is => is.valid))
 }
