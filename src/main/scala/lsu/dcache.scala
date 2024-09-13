@@ -913,5 +913,5 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
 
   io.lsu.free_mshrs := mshrs.io.free_mshrs
   io.lsu.cache_hits := PopCount((s2_valid zip s2_hit) map { case (v, h) => v && h })
-  io.lsu.cache_misses := PopCount((s2_valid zip s2_hit) map { case (v,h) => v && !h })
+  io.lsu.cache_misses := PopCount((s2_valid zip s2_hit) map { case (v, h) => v && !h })
 }

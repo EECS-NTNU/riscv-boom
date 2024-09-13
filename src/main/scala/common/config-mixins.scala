@@ -54,15 +54,19 @@ class WithRegisterTaintTrackingEnabled() extends Config((site, here, up) => {
 
 class WithTraceStats() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
-    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
-      core = tp.tileParams.core.copy(traceStats = true)))
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(
+      traceStats = true
+      )))
+      case other => other
   }
 })
 
 class WithTraceDebug() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
-    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
-      core = tp.tileParams.core.copy(traceDebug = true)))
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(
+      traceDebug = true
+    )))
+    case other => other
   }
 })
 

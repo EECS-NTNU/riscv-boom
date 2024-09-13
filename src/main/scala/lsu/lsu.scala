@@ -100,8 +100,8 @@ class LSUDMemIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
   val release = Flipped(new DecoupledIO(new TLBundleC(edge.bundle)))
 
   val free_mshrs = Input(UInt(4.W))
-  val cache_misses = Input(UInt(2.W))
-  val cache_hits = Input(UInt(2.W))
+  val cache_misses = Input(UInt(4.W))
+  val cache_hits = Input(UInt(4.W))
 
   // Clears prefetching MSHRs
   val force_order  = Output(Bool())
@@ -169,9 +169,9 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   // End STT
 
   val free_mshrs = Output(UInt(4.W))
-  val cache_misses = Output(UInt(2.W))
-  val cache_hits = Output(UInt(2.W))
-  val mem_accesses = Output(UInt(2.W))
+  val cache_misses = Output(UInt(4.W))
+  val cache_hits = Output(UInt(4.W))
+  val mem_accesses = Output(UInt(4.W))
 
   val perf        = Output(new Bundle {
     val acquire = Bool()
@@ -1745,10 +1745,12 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   //val num_mem_access = RegInit(0.U(32.W))
   //num_mem_access := num_mem_access + PopCount(will_fire_load_incoming) + PopCount(will_fire_load_retry) + PopCount(will_fire_load_wakeup)
-  io.core.mem_accesses := PopCount(will_fire_load_incoming) + PopCount(will_fire_load_retry) + PopCount(will_fire_load_wakeup)
+  //io.core.mem_accesses := PopCount(will_fire_load_incoming) + PopCount(will_fire_load_retry) + PopCount(will_fire_load_wakeup)
+  io.core.mem_accesses := PopCount(dmem_req map (u => u.valid))
   io.core.cache_hits := io.dmem.cache_hits
   io.core.cache_misses := io.dmem.cache_misses
   io.core.free_mshrs := io.dmem.free_mshrs
+  dontTouch(io.core)
 
   // -----------------------
   // Hellacache interface

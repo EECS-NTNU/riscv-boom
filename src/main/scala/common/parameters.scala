@@ -192,8 +192,8 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
   val traceDebug = boomParams.traceDebug
   val traceStats = boomParams.traceStats
 
-  require(!(enableRegisterTaintTracking || enableRenameTaintTracking) || 
-          (enableCheckpointTaints != inOrderBranchResolution), "Must be unsafe, or have either checkpoint tainting or in-order branches")
+  require(!(enableRenameTaintTracking) || 
+          (enableCheckpointTaints != inOrderBranchResolution), "Must be reg/nda/unsafe, or have either checkpoint tainting or in-order branches")
   require(!(enableRenameTaintTracking && enableRegisterTaintTracking))
   require(!(enableRegisterTaintTracking && enableNDA))
   require(!(enableRenameTaintTracking && enableNDA))

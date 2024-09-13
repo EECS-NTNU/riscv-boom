@@ -128,9 +128,11 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   
   val filledMSHRs   = UInt(4.W)
   
-  val memAccesses   = UInt(2.W)
+  val memAccesses   = UInt(4.W)
   val hitsInCache   = UInt(4.W)
   val missesInCache = UInt(4.W)
+
+  val helpDebug     = UInt(8.W)
 
   val taintsCalced = UInt(4.W)
   val yrotsOnCalc  = UInt(4.W)
@@ -1859,7 +1861,8 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       val traceStats = Reg(new TraceStatsBundle())
 
       traceStats.numCommit := PopCount(rob.io.commit.valids)
-      traceStats.isBranch := rob.io.commit.uops map (u => u.is_br)
+      traceStats.isBranch := (rob.io.commit.valids zip rob.io.commit.uops) map 
+                              { case (v,u) => (v && u.is_br)}
       
       for (w <- 0 until coreWidth) {
         val stats = rob.io.commit.uops(w).stats
@@ -1871,11 +1874,13 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
         }
       }
 
-      traceStats.filledMSHRs := io.lsu.free_mshrs
+      traceStats.filledMSHRs := nLBEntries.U - io.lsu.free_mshrs
 
       traceStats.memAccesses := io.lsu.mem_accesses
       traceStats.hitsInCache := io.lsu.cache_hits
       traceStats.missesInCache := io.lsu.cache_misses
+
+      traceStats.helpDebug := 255.U
 
       traceStats.taintsCalced := 0.U
       traceStats.yrotsOnCalc := 0.U
@@ -1899,13 +1904,14 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       io.traceDoctor.valid := true.B
       io.traceDoctor.bits := 
         Cat(Seq(
+          traceStats.branchLatency.reverse.asUInt.pad(64),
           traceStats.numCommit.pad(8),
-          traceStats.isBranch.asUInt.pad(8),
-          traceStats.branchLatency.asUInt.pad(64),
+          traceStats.isBranch.reverse.asUInt.pad(8),
           traceStats.filledMSHRs.pad(8),
           traceStats.memAccesses.pad(8),
           traceStats.hitsInCache.pad(8),
           traceStats.missesInCache.pad(8),
+          traceStats.helpDebug.pad(8),
           traceStats.taintsCalced.pad(8),
           traceStats.yrotsOnCalc.pad(8),
           traceStats.taintedLoads.pad(8),
@@ -1914,10 +1920,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.filledMemIssueSlots.pad(8)
         ).reverse).pad(io.traceDoctor.traceWidth).asBools()
           
-          
-          
       // traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
-
   }
 
   if (usingTrace) {
