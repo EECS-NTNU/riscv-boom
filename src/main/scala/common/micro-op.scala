@@ -197,6 +197,8 @@ class StatSignals extends Bundle()
 {
   val branchDispatched = UInt(64.W)
   val branchResolved = UInt(64.W)
+  val instDispatched = UInt(64.W)
+  val instCompleted = UInt(64.W)
 }
 
 

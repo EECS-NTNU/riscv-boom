@@ -122,10 +122,13 @@ class TraceDebugBundle(implicit p: Parameters) extends BoomBundle {
 }
 
 class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
-  val numCommit = UInt(4.W)
-  val isBranch = Vec(4, Bool())
-  val branchLatency = Vec(4, UInt(16.W))
-  
+  val branchLatency = Vec(coreWidth, UInt(16.W))
+  val instLatency = Vec(coreWidth, UInt(16.W))
+
+  val isCommit = Vec(coreWidth, Bool())
+  val isBranch = Vec(coreWidth, Bool())
+  val branchMispredict = UInt(8.W)
+
   val filledMSHRs   = UInt(4.W)
   
   val memAccesses   = UInt(4.W)
@@ -141,6 +144,8 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   val filledIntIssueSlots = UInt(8.W)
   val filledFpIssueSlots = UInt(8.W)
   val filledMemIssueSlots = UInt(8.W)
+
+  val blockingSignals = Vec(8, Bool())
 }
 
 /**
@@ -881,6 +886,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
 
     dis_uops(w).stats.branchDispatched := debug_tsc_reg
+    dis_uops(w).stats.instDispatched := debug_tsc_reg
     // End STT
   }
   dontTouch(dis_uops)
@@ -1860,10 +1866,12 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
     }
       val traceStats = Reg(new TraceStatsBundle())
 
-      traceStats.numCommit := PopCount(rob.io.commit.valids)
+      traceStats.isCommit := rob.io.commit.valids
       traceStats.isBranch := (rob.io.commit.valids zip rob.io.commit.uops) map 
                               { case (v,u) => (v && u.is_br)}
       
+      traceStats.branchMispredict := b2.mispredict
+
       for (w <- 0 until coreWidth) {
         val stats = rob.io.commit.uops(w).stats
 
@@ -1871,6 +1879,12 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.branchLatency(w) := 1.U << 15.U
         }.otherwise {
           traceStats.branchLatency(w) := stats.branchResolved - stats.branchDispatched
+        }
+
+        when ((stats.instCompleted - stats.instDispatched) >= (1.U << 15.U)) {
+          traceStats.instLatency(w) := 1.U << 15.U
+        }.otherwise {
+          traceStats.instLatency(w) := stats.instCompleted - stats.instDispatched
         }
       }
 
@@ -1901,12 +1915,23 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.filledFpIssueSlots := fp_pipeline.io.filled_slots
       traceStats.filledMemIssueSlots := mem_iss_unit.io.filled_slots
 
+      traceStats.blockingSignals(0) := !rob.io.ready
+      traceStats.blockingSignals(1) := io.lsu.ldq_full.reduce(_||_)
+      traceStats.blockingSignals(2) := io.lsu.stq_full.reduce(_||_)
+      traceStats.blockingSignals(3) := !(dispatcher.io.ren_uops.map{r => r.ready}.reduce(_||_))
+      traceStats.blockingSignals(4) := ren_stalls.reduce(_||_)
+      traceStats.blockingSignals(5) := wait_for_empty_pipeline.reduce(_||_)
+      traceStats.blockingSignals(6) := wait_for_rocc.reduce(_||_)
+      traceStats.blockingSignals(7) := io.ifu.redirect_flush
+
       io.traceDoctor.valid := true.B
       io.traceDoctor.bits := 
         Cat(Seq(
           traceStats.branchLatency.reverse.asUInt.pad(64),
-          traceStats.numCommit.pad(8),
+          traceStats.instLatency.reverse.asUInt.pad(64),
+          traceStats.isCommit.reverse.asUInt.pad(8),
           traceStats.isBranch.reverse.asUInt.pad(8),
+          traceStats.branchMispredict.pad(8),
           traceStats.filledMSHRs.pad(8),
           traceStats.memAccesses.pad(8),
           traceStats.hitsInCache.pad(8),
@@ -1917,7 +1942,8 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.taintedLoads.pad(8),
           traceStats.filledIntIssueSlots.pad(8),
           traceStats.filledFpIssueSlots.pad(8),
-          traceStats.filledMemIssueSlots.pad(8)
+          traceStats.filledMemIssueSlots.pad(8),
+          traceStats.blockingSignals.reverse.asUInt.pad(8),
         ).reverse).pad(io.traceDoctor.traceWidth).asBools()
           
       // traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
