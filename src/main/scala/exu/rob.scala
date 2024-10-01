@@ -109,6 +109,11 @@ class RobIo(
   // Stall the frontend if we know we will redirect the PC
   val flush_frontend = Output(Bool())
 
+  //STT blocks
+  val ldq_btc_head = Input(UInt())
+  val ldq_head = Input(UInt())
+  val blocked_taint = Output(Bool())
+
 
   val debug_tsc = Input(UInt(xLen.W))
 }
@@ -550,6 +555,11 @@ class Rob(
 
   val mem_commits = Wire(Vec(coreWidth+1, UInt(4.W)))
 
+
+  val distance = Mux(io.ldq_head <= io.ldq_btc_head,
+                      (io.ldq_btc_head - io.ldq_head) + numTaintWakeupPorts.U,
+                      (io.ldq_btc_head + (numLdqEntries.U - io.ldq_head)) + numTaintWakeupPorts.U)
+
   //Mem commits is to ensure that we do not skip broadcasting any insts as non-speculative
   //when we have tightly packed mem instructions all in the same speculation window
   if (enableRegisterTaintTracking || enableRenameTaintTracking) {
@@ -561,14 +571,27 @@ class Rob(
     }
   }
 
+  if ((enableRegisterTaintTracking || enableRenameTaintTracking) && enableSmartCommit) {
+    io.blocked_taint := (mem_commits(coreWidth)) > distance
+  } else if (enableRegisterTaintTracking || enableRenameTaintTracking) {
+    io.blocked_taint := mem_commits(coreWidth) > memWidth.U
+  } else {
+    io.blocked_taint := false.B
+  }
+
   dontTouch(mem_commits)
 
   for (w <- 0 until coreWidth) {
     will_throw_exception = (can_throw_exception(w) && !block_commit && !block_xcpt) || will_throw_exception
-
-    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= memWidth.U)
+    if (enableSmartCommit) {
+    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w) <= distance)
     block_commit         = (rob_head_vals(w) &&
-                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > memWidth.U))) || block_commit
+                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w) > distance))) || block_commit
+    } else {
+    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= numTaintWakeupPorts.U)
+    block_commit         = (rob_head_vals(w) &&
+                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > numTaintWakeupPorts.U))) || block_commit
+    }
     block_xcpt           = will_commit(w)
   }
 

@@ -52,6 +52,13 @@ class WithRegisterTaintTrackingEnabled() extends Config((site, here, up) => {
   }
 })
 
+class WithSmartCommitEnabled() extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(enableSmartCommit = true)))
+  }
+})
+
 class WithTraceStats() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(

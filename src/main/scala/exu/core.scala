@@ -974,6 +974,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
   rob.io.debug_tsc := debug_tsc_reg
   rob.io.csr_stall := csr.io.csr_stall
 
+  //STT
+  rob.io.ldq_btc_head := io.lsu.ldq_btc_head
+  rob.io.ldq_head := io.lsu.ldq_head
+
   // Minor hack: ecall and breaks need to increment the FTQ deq ptr earlier than commit, since
   // they write their PC into the CSR the cycle before they commit.
   // Since these are also unique, increment the FTQ ptr when they are dispatched
@@ -1921,7 +1925,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.blockingSignals(3) := !(dispatcher.io.ren_uops.map{r => r.ready}.reduce(_||_))
       traceStats.blockingSignals(4) := ren_stalls.reduce(_||_)
       traceStats.blockingSignals(5) := wait_for_empty_pipeline.reduce(_||_)
-      traceStats.blockingSignals(6) := wait_for_rocc.reduce(_||_)
+      traceStats.blockingSignals(6) := rob.io.blocked_taint//wait_for_rocc.reduce(_||_)
       traceStats.blockingSignals(7) := io.ifu.redirect_flush
 
       io.traceDoctor.valid := true.B

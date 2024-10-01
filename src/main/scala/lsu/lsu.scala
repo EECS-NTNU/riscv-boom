@@ -1373,7 +1373,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   for (w <- 0 until memWidth) {
     val ldq_e = ldq(WrapAdd(ldq_yrot_idx, w.U, numLdqEntries))
-    val valid = canIncrementHead.slice(0, w).foldLeft(true.B){case (v, w) => v && w}
+    val valid = canBroadcastHead.slice(0, w).foldLeft(true.B){case (v, w) => v && w}
 
     when (valid && ldq_e.valid && isNonSpeculative(ldq_e.bits) && ldq_e.bits.succeeded) {
       canIncrementHead(w) := true.B
