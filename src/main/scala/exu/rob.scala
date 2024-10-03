@@ -559,6 +559,8 @@ class Rob(
   val distance = Mux(io.ldq_head <= io.ldq_btc_head,
                       (io.ldq_btc_head - io.ldq_head) + numTaintWakeupPorts.U,
                       (io.ldq_btc_head + (numLdqEntries.U - io.ldq_head)) + numTaintWakeupPorts.U)
+  
+  assert(distance > 0.U)
 
   //Mem commits is to ensure that we do not skip broadcasting any insts as non-speculative
   //when we have tightly packed mem instructions all in the same speculation window
@@ -584,9 +586,9 @@ class Rob(
   for (w <- 0 until coreWidth) {
     will_throw_exception = (can_throw_exception(w) && !block_commit && !block_xcpt) || will_throw_exception
     if (enableSmartCommit) {
-    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w) <= distance)
+    will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= distance)
     block_commit         = (rob_head_vals(w) &&
-                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w) > distance))) || block_commit
+                           (!can_commit(w) || can_throw_exception(w) || (mem_commits(w+1) > distance))) || block_commit
     } else {
     will_commit(w)       := can_commit(w) && !can_throw_exception(w) && !block_commit && (mem_commits(w+1) <= numTaintWakeupPorts.U)
     block_commit         = (rob_head_vals(w) &&
