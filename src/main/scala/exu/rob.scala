@@ -555,10 +555,14 @@ class Rob(
 
   val mem_commits = Wire(Vec(coreWidth+1, UInt(4.W)))
 
-
-  val distance = Mux(io.ldq_head <= io.ldq_btc_head,
-                      (io.ldq_btc_head - io.ldq_head) + numTaintWakeupPorts.U,
-                      (io.ldq_btc_head + (numLdqEntries.U - io.ldq_head)) + numTaintWakeupPorts.U)
+  val distance = Wire(UInt(6.W))
+  val load_head = Wire(UInt(6.W))
+  val load_btc_head = Wire(UInt(6.W))
+  load_head := io.ldq_head
+  load_btc_head := io.ldq_btc_head
+  distance := Mux(load_head <= load_btc_head,
+                      (load_btc_head - load_head) + numTaintWakeupPorts.U(6.W),
+                      (load_btc_head + (numLdqEntries.U - load_head)) + numTaintWakeupPorts.U(6.W))
   
   assert(distance > 0.U)
 
@@ -576,7 +580,7 @@ class Rob(
   if ((enableRegisterTaintTracking || enableRenameTaintTracking) && enableSmartCommit) {
     io.blocked_taint := (mem_commits(coreWidth)) > distance
   } else if (enableRegisterTaintTracking || enableRenameTaintTracking) {
-    io.blocked_taint := mem_commits(coreWidth) > memWidth.U
+    io.blocked_taint := mem_commits(coreWidth) > numTaintWakeupPorts.U
   } else {
     io.blocked_taint := false.B
   }
