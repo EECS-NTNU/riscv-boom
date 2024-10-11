@@ -101,6 +101,7 @@ class IssueUnitIO(
   //Stats
   val blocked_slots    = Output(UInt(8.W))
   val filled_slots     = Output(UInt(8.W))
+  val partial_issues   = Output(UInt(8.W))
 
   //Debug
   val slot0_valid      = Output(Bool())

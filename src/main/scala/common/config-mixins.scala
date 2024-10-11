@@ -59,6 +59,13 @@ class WithSmartCommitEnabled() extends Config((site, here, up) => {
   }
 })
 
+class WithWideTaintWakeup() extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(numTaintWakeupPorts = 4)))
+  }
+})
+
 class WithTraceStats() extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(

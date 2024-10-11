@@ -172,6 +172,11 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   val cache_misses = Output(UInt(4.W))
   val cache_hits = Output(UInt(4.W))
   val mem_accesses = Output(UInt(4.W))
+  val store_slots_valid = Output(UInt(8.W))
+  val store_slots_valid_addr = Output(UInt(8.W))
+  val store_slots_valid_data = Output(UInt(8.W))
+  val load_slots_valid = Output(UInt(8.W))
+  val load_slots_valid_addr = Output(UInt(8.W))
 
   val perf        = Output(new Bundle {
     val acquire = Bool()
@@ -1750,7 +1755,12 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   io.core.cache_hits := io.dmem.cache_hits
   io.core.cache_misses := io.dmem.cache_misses
   io.core.free_mshrs := io.dmem.free_mshrs
-  dontTouch(io.core)
+  io.core.store_slots_valid := PopCount(stq map (u => u.valid))
+  io.core.store_slots_valid_addr := PopCount(stq map (u => (u.valid && u.bits.addr.valid)))
+  io.core.store_slots_valid_data := PopCount(stq map (u => (u.valid && u.bits.data.valid)))
+  io.core.load_slots_valid := PopCount(ldq map (u => u.valid))
+  io.core.load_slots_valid_addr := PopCount(ldq map (u => (u.valid && u.bits.addr.valid)))
+  //dontTouch(io.core)
 
   // -----------------------
   // Hellacache interface

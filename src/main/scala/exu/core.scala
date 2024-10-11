@@ -127,6 +127,8 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
 
   val isCommit = Vec(coreWidth, Bool())
   val isBranch = Vec(coreWidth, Bool())
+  val isLoad   = Vec(coreWidth, Bool())
+  val isStore  = Vec(coreWidth, Bool())
   val branchMispredict = UInt(8.W)
 
   val filledMSHRs   = UInt(4.W)
@@ -134,6 +136,7 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   val memAccesses   = UInt(4.W)
   val hitsInCache   = UInt(4.W)
   val missesInCache = UInt(4.W)
+  val partialIssues = UInt(8.W)
 
   val helpDebug     = UInt(8.W)
 
@@ -145,7 +148,14 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   val filledFpIssueSlots = UInt(8.W)
   val filledMemIssueSlots = UInt(8.W)
 
+  val filledStoreSlots = UInt(8.W)
+  val filledStoreAddr = UInt(8.W)
+  val filledStoreData = UInt(8.W)
+  val filledLoadSlots = UInt(8.W)
+  val filledLoadAddr = UInt(8.W)
+
   val blockingSignals = Vec(8, Bool())
+  val xcptSignals = Vec(8, Bool())
 }
 
 /**
@@ -1873,6 +1883,10 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.isCommit := rob.io.commit.valids
       traceStats.isBranch := (rob.io.commit.valids zip rob.io.commit.uops) map 
                               { case (v,u) => (v && u.is_br)}
+      traceStats.isLoad := (rob.io.commit.valids zip rob.io.commit.uops) map
+                              { case (v, u) => (v && u.uses_ldq)}
+      traceStats.isStore := (rob.io.commit.valids zip rob.io.commit.uops) map
+                              { case (v, u) => (v && u.uses_stq)}
       
       traceStats.branchMispredict := b2.mispredict
 
@@ -1897,6 +1911,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.memAccesses := io.lsu.mem_accesses
       traceStats.hitsInCache := io.lsu.cache_hits
       traceStats.missesInCache := io.lsu.cache_misses
+      traceStats.partialIssues := mem_iss_unit.io.partial_issues
 
       traceStats.helpDebug := 255.U
 
@@ -1919,6 +1934,12 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.filledFpIssueSlots := fp_pipeline.io.filled_slots
       traceStats.filledMemIssueSlots := mem_iss_unit.io.filled_slots
 
+      traceStats.filledStoreSlots := io.lsu.store_slots_valid
+      traceStats.filledStoreAddr := io.lsu.store_slots_valid_addr
+      traceStats.filledStoreData := io.lsu.store_slots_valid_data
+      traceStats.filledLoadSlots := io.lsu.load_slots_valid
+      traceStats.filledLoadAddr  := io.lsu.load_slots_valid_addr
+
       traceStats.blockingSignals(0) := !rob.io.ready
       traceStats.blockingSignals(1) := io.lsu.ldq_full.reduce(_||_)
       traceStats.blockingSignals(2) := io.lsu.stq_full.reduce(_||_)
@@ -1928,18 +1949,30 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.blockingSignals(6) := rob.io.blocked_taint//wait_for_rocc.reduce(_||_)
       traceStats.blockingSignals(7) := io.ifu.redirect_flush
 
+      traceStats.xcptSignals(0)     := rob.io.com_xcpt.valid
+      traceStats.xcptSignals(1)     := rob.io.commit.rollback
+      traceStats.xcptSignals(2)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === MINI_EXCEPTION_MEM_ORDERING
+      traceStats.xcptSignals(3)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.load_page_fault.U
+      traceStats.xcptSignals(4)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.store_page_fault.U
+      traceStats.xcptSignals(5)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.fetch_access.U
+      traceStats.xcptSignals(6)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.misaligned_load.U
+      traceStats.xcptSignals(7)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.misaligned_store.U
+
       io.traceDoctor.valid := true.B
       io.traceDoctor.bits := 
         Cat(Seq(
           traceStats.branchLatency.reverse.asUInt.pad(64),
           traceStats.instLatency.reverse.asUInt.pad(64),
-          traceStats.isCommit.reverse.asUInt.pad(8),
-          traceStats.isBranch.reverse.asUInt.pad(8),
+          traceStats.isCommit.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8), //hack for small boom
+          traceStats.isBranch.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8), //hack for small boom
+          traceStats.isLoad.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8),
+          traceStats.isStore.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8),
           traceStats.branchMispredict.pad(8),
           traceStats.filledMSHRs.pad(8),
           traceStats.memAccesses.pad(8),
           traceStats.hitsInCache.pad(8),
           traceStats.missesInCache.pad(8),
+          traceStats.partialIssues.pad(8),
           traceStats.helpDebug.pad(8),
           traceStats.taintsCalced.pad(8),
           traceStats.yrotsOnCalc.pad(8),
@@ -1947,7 +1980,13 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.filledIntIssueSlots.pad(8),
           traceStats.filledFpIssueSlots.pad(8),
           traceStats.filledMemIssueSlots.pad(8),
+          traceStats.filledStoreSlots.pad(8),
+          traceStats.filledStoreAddr.pad(8),
+          traceStats.filledStoreData.pad(8),
+          traceStats.filledLoadSlots.pad(8),
+          traceStats.filledLoadAddr.pad(8),
           traceStats.blockingSignals.reverse.asUInt.pad(8),
+          traceStats.xcptSignals.reverse.asUInt.pad(8),
         ).reverse).pad(io.traceDoctor.traceWidth).asBools()
           
       // traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()

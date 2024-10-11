@@ -156,4 +156,7 @@ class IssueUnitCollapsing(
 
   io.blocked_slots := PopCount(issue_slots map (is => is.blocked_taint))
   io.filled_slots := PopCount(issue_slots map (is => is.valid))
+  io.partial_issues := PopCount(issue_slots map (is => (is.grant && 
+                                        ((is.uop.uopc === uopSTA && is.uop.lrs2_rtype === RT_X) || 
+                                         (is.uop.uopc === uopSTD && is.uop.lrs1_rtype === RT_X)))))
 }
