@@ -177,6 +177,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   val store_slots_valid_data = Output(UInt(8.W))
   val load_slots_valid = Output(UInt(8.W))
   val load_slots_valid_addr = Output(UInt(8.W))
+  val foward_valid = Output(Vec(memWidth, Bool()))
 
   val perf        = Output(new Bundle {
     val acquire = Bool()
@@ -1259,6 +1260,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
                                  !IsKilledByBranch(io.core.brupdate, lcam_uop(w))    &&
                                  !io.core.exception && !RegNext(io.core.exception)))
   mem_forward_stq_idx     := forwarding_idx
+
+  io.core.forward_valid := mem_forward_valid
 
   // Avoid deadlock with a 1-w LSU prioritizing load wakeups > store commits
   // On a 2W machine, load wakeups and store commits occupy separate pipelines,

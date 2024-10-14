@@ -153,6 +153,7 @@ class TraceStatsBundle(implicit p: Parameters) extends BoomBundle {
   val filledStoreData = UInt(8.W)
   val filledLoadSlots = UInt(8.W)
   val filledLoadAddr = UInt(8.W)
+  val validForwards = Vec(memWidth, Bool())
 
   val blockingSignals = Vec(8, Bool())
   val xcptSignals = Vec(8, Bool())
@@ -1939,6 +1940,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
       traceStats.filledStoreData := io.lsu.store_slots_valid_data
       traceStats.filledLoadSlots := io.lsu.load_slots_valid
       traceStats.filledLoadAddr  := io.lsu.load_slots_valid_addr
+      traceStats.validForwards   := io.lsu.forward_valid
 
       traceStats.blockingSignals(0) := !rob.io.ready
       traceStats.blockingSignals(1) := io.lsu.ldq_full.reduce(_||_)
@@ -1985,6 +1987,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.filledStoreData.pad(8),
           traceStats.filledLoadSlots.pad(8),
           traceStats.filledLoadAddr.pad(8),
+          traceStats.validForwards.reverse.asUInt.pad(8),
           traceStats.blockingSignals.reverse.asUInt.pad(8),
           traceStats.xcptSignals.reverse.asUInt.pad(8),
         ).reverse).pad(io.traceDoctor.traceWidth).asBools()
