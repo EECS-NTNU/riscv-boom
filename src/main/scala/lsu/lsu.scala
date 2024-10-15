@@ -177,7 +177,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   val store_slots_valid_data = Output(UInt(8.W))
   val load_slots_valid = Output(UInt(8.W))
   val load_slots_valid_addr = Output(UInt(8.W))
-  val foward_valid = Output(Vec(memWidth, Bool()))
+  val forward_valid = Output(Vec(memWidth, Bool()))
 
   val perf        = Output(new Bundle {
     val acquire = Bool()

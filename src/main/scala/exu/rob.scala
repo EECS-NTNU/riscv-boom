@@ -113,6 +113,7 @@ class RobIo(
   val ldq_btc_head = Input(UInt())
   val ldq_head = Input(UInt())
   val blocked_taint = Output(Bool())
+  val mem_order_xcpt = Output(Bool())
 
 
   val debug_tsc = Input(UInt(xLen.W))
@@ -607,6 +608,7 @@ class Rob(
   val is_mini_exception = io.com_xcpt.bits.cause === MINI_EXCEPTION_MEM_ORDERING
   io.com_xcpt.valid := exception_thrown && !is_mini_exception
   io.com_xcpt.bits.cause := r_xcpt_uop.exc_cause
+  io.mem_order_xcpt := will_throw_exception && is_mini_exception
 
   io.com_xcpt.bits.badvaddr := Sext(r_xcpt_badvaddr, xLen)
   val insn_sys_pc2epc =

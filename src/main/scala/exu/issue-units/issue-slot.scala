@@ -94,6 +94,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   val next_state_uopc = Wire(UInt())
   val next_lrs1_rtype = Wire(UInt()) // the next reg type of this slot (which might then get moved to a new slot)
   val next_lrs2_rtype = Wire(UInt()) // the next reg type of this slot (which might then get moved to a new slot)
+  val partial_reset   = Wire(Bool()) // Should the taint calc be reset due to a partial issue
 
   val state = RegInit(s_invalid)
   val previous_state = RegInit(s_invalid)
@@ -154,6 +155,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   next_state_uopc := slot_uop.uopc
   next_lrs1_rtype := slot_uop.lrs1_rtype
   next_lrs2_rtype := slot_uop.lrs2_rtype
+  partial_reset := false.B
 
   when (io.kill) {
     next_state := s_invalid
@@ -201,15 +203,18 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
       }
     }
   } .elsewhen (state === s_taint_blocked) {
+
     assert(!(previous_state === s_invalid))
     assert(!(previous_state === s_taint_blocked))
     assert(previous_state === s_valid_1 || previous_state === s_valid_2)
     assert(enableRegisterTaintTracking.B)
+    
     //Partial dispatch, i.e. we sent data or address to stq
     when(yrot_r && previous_state === s_valid_2 &&
         (state_uopc === uopSTD || state_uopc === uopSTA || state_uopc === uopAMO_AG)) {
       next_state := s_valid_1
       next_uopc := state_uopc
+      partial_reset := true.B //taint calc succeeded for one operand, but not yet for other
       //This happens when an s_valid_2 has both operands ready and can terminate
       //This should never trip cause state_uopc has to be something othern than 0.U
       //TODO: Can remove?
@@ -405,7 +410,7 @@ class IssueSlot(val numWakeupPorts: Int)(implicit p: Parameters)
   if (enableRegisterTaintTracking) {
   io.out_uop.yrot       := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot, slot_uop.yrot)
   io.out_uop.yrot_r     := Mux(io.yrot_resp.valid, io.yrot_resp.bits.yrot_r, yrot_r)
-  io.out_uop.taint_set  := Mux(io.grant, true.B, slot_uop.taint_set)
+  io.out_uop.taint_set  := Mux(io.grant, true.B, Mux(partial_reset, false.B, slot_uop.taint_set))
   } else {
   io.out_uop.yrot := slot_uop.yrot
   io.out_uop.yrot_r := yrot_r

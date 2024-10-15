@@ -1953,7 +1953,7 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
 
       traceStats.xcptSignals(0)     := rob.io.com_xcpt.valid
       traceStats.xcptSignals(1)     := rob.io.commit.rollback
-      traceStats.xcptSignals(2)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === MINI_EXCEPTION_MEM_ORDERING
+      traceStats.xcptSignals(2)     := rob.io.mem_order_xcpt //mem order xcpt is never communicated to core through xcpt com
       traceStats.xcptSignals(3)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.load_page_fault.U
       traceStats.xcptSignals(4)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.store_page_fault.U
       traceStats.xcptSignals(5)     := rob.io.com_xcpt.valid && rob.io.com_xcpt.bits.cause === Causes.fetch_access.U
