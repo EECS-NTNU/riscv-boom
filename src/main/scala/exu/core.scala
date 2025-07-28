@@ -1987,9 +1987,9 @@ class BoomCore(usingTrace: Boolean)(implicit p: Parameters) extends BoomModule
           traceStats.filledStoreData.pad(8),
           traceStats.filledLoadSlots.pad(8),
           traceStats.filledLoadAddr.pad(8),
-          traceStats.validForwards.reverse.asUInt.pad(8),
-          traceStats.blockingSignals.reverse.asUInt.pad(8),
-          traceStats.xcptSignals.reverse.asUInt.pad(8),
+          traceStats.validForwards.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8),
+          traceStats.blockingSignals.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8),
+          traceStats.xcptSignals.reverse.asUInt.asTypeOf(UInt(8.W)).pad(8),
         ).reverse).pad(io.traceDoctor.traceWidth).asBools()
           
       // traceStats.asUInt().pad(io.traceDoctor.traceWidth).asBools()
